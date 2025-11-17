@@ -1,0 +1,12 @@
+# PlatformIO build and env files
+.pio/
+.pioenvs/
+
+# VS Code settings and caches
+.vscode/
+
+# Misc generated files
+.sconsign.dblite
+*.elf
+*.bin
+*.hex
