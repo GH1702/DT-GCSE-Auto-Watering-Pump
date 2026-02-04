@@ -8,6 +8,19 @@
 #include <Adafruit_SSD1306.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include "index_html.h"
+
+
+// ---------- Boot mode ----------
+enum BootMode {
+  MODE_AP,
+  MODE_MQTT
+};
+
+BootMode bootMode;
+#define MODE_PIN 13 // GPIO13 to select mode at boot (HIGH = MQTT, LOW = AP)
 
 // --------- User config ----------
 const char* ssid       = "BT-ZMAKN3";
@@ -25,6 +38,11 @@ const String baseTopic = "esp32/pumps/";
 #define SCREEN_HEIGHT 64
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
+// ---------- Ultrasonic (SR04M) ----------
+#define TRIG_PIN 16
+#define ECHO_PIN 17
+
+
 // ---------- Time (NTP) ----------
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000); // UTC, update every 60s
@@ -33,18 +51,34 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000); // UTC, update every 60s
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
+// ---------- WebServer Constants ----------
+WebServer server(80);
+
+unsigned long pumpOffTime[4] = {0, 0, 0, 0};
+
+
 // ---------- Pins ----------
-int pumpPins[4]      = {25, 26, 27, 14};   // relay outputs (active-low)
-int moisturePins[4]  = {34, 35, 32, 33};   // analog inputs (ESP32 ADC pins)
+int pumpPins[4]      = {26, 25, 33, 32};   // relay outputs (active-low)
+int moisturePins[4] = {35, 34, 39, 36};    // analog inputs (ESP32 ADC pins)
+int readAveragedADC(int pin) {
+  long total = 0;
+  for (int i = 0; i < 10; i++) {
+    total += analogRead(pin);
+    delay(2);
+  }
+  return total / 10;
+}
+
+
 
 bool pumpState[4] = {false, false, false, false};   // false = OFF, true = ON
 int moisturePercent[4] = {0,0,0,0};
 
 // ---------- Calibration ----------
-const int wetMin  = 950;   // reading in water -> treated as 100%
+int wetMin[4] = {950, 950, 950, 950};   // reading in water -> treated as 100%
 const int wetMax  = 1100;  // just a safety high bound near wet
 const int dryMin  = 3200;  // dry lower bound
-const int dryMax  = 3300;  // dry upper bound -> treated as 0%
+int dryMax[4] = {3300, 3300, 3300, 3300};  // dry upper bound -> treated as 0%
 
 // ---------- Timers ----------
 unsigned long lastOledUpdate    = 0;
@@ -53,15 +87,18 @@ unsigned long lastMoistureMQTT  = 0;
 unsigned long lastClockUpdate   = 0;
 
 // ---------- Helpers ----------
-int mapMoistToPercent(int raw) {
-  if (raw <= wetMin) return 100;
-  if (raw >= dryMax) return 0;
-  // linear map between wetMin (100%) and dryMax (0%)
-  float pct = 100.0f * (float)(dryMax - raw) / (float)(dryMax - wetMin);
+int mapMoistToPercent(int raw, int idx) {
+  if (raw <= wetMin[idx]) return 100;
+  if (raw >= dryMax[idx]) return 0;
+
+  float pct = 100.0f * (float)(dryMax[idx] - raw) /
+              (float)(dryMax[idx] - wetMin[idx]);
+
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   return (int)round(pct);
 }
+
 
 void publishPumpState(int idx) {
   String topic = baseTopic + String(idx + 1) + "/state";
@@ -80,6 +117,8 @@ void publishMoistureValuesMQTT() {
   }
 }
 
+
+
 // ---------- Pump control (active-low) ----------
 void setPumpState(int pump, bool state) {
   pumpState[pump] = state;
@@ -90,11 +129,77 @@ void setPumpState(int pump, bool state) {
 
 // ---------- Read moisture sensors ----------
 void readMoistureSensors() {
-  for (int i=0;i<4;i++) {
-    int raw = analogRead(moisturePins[i]);
-    moisturePercent[i] = mapMoistToPercent(raw);
+  for (int i = 0; i < 4; i++) {
+    int raw = readAveragedADC(moisturePins[i]);
+    moisturePercent[i] = mapMoistToPercent(raw, i);
   }
 }
+
+
+// ---------- Read Distance Sensor ----------
+long readWaterDistanceCM() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return -1;
+
+  return duration / 58;
+}
+int waterPercentFromDistance(long cm) {
+  if (cm <= 5) return 100;
+  if (cm >= 30) return 0;
+
+  return map(cm, 30, 5, 0, 100);
+}
+int waterLevelPercent = 0;
+unsigned long lastWaterRead = 0;
+
+
+// ---------- Web server handlers ----------
+void handleRoot() {
+  server.send(200, "text/html", INDEX_HTML);
+}
+  
+void handlePump() {
+
+  // timed run
+  if (server.hasArg("p") && server.hasArg("t")) {
+
+    int pump = server.arg("p").toInt() - 1;
+    int seconds = server.arg("t").toInt();
+
+    if (pump >= 0 && pump < 4 && seconds > 0) {
+      setPumpState(pump, true);
+      pumpOffTime[pump] = millis() + (unsigned long)seconds * 1000UL;
+    }
+  }
+
+  // manual ON
+  if (server.hasArg("on")) {
+    int pump = server.arg("on").toInt() - 1;
+    if (pump >= 0 && pump < 4) {
+      setPumpState(pump, true);
+      pumpOffTime[pump] = 0;
+    }
+  }
+
+  // manual OFF
+  if (server.hasArg("off")) {
+    int pump = server.arg("off").toInt() - 1;
+    if (pump >= 0 && pump < 4) {
+      setPumpState(pump, false);
+      pumpOffTime[pump] = 0;
+    }
+  }
+
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
 
 // ---------- OLED drawing ----------
 void drawOLED() {
@@ -127,6 +232,11 @@ void drawOLED() {
     display.print(": ");
     display.print(moisturePercent[i]);
     display.print("%");
+    display.setCursor(0, 58);
+    display.print("Water: ");
+    display.print(waterLevelPercent);
+    display.print("%");
+
   }
 
   display.display();
@@ -172,19 +282,63 @@ void reconnectMQTT() {
   }
 }
 
+// ---------- Start Access Point ----------
+void startAccessPoint() {
+  WiFi.mode(WIFI_AP);
+
+  const char* ap_ssid = "ESP32-Watering";
+  const char* ap_pass = "watering123";
+
+  WiFi.softAP(ap_ssid, ap_pass);
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("WIFI MODE");
+  display.setCursor(0, 16);
+  display.print("SSID: "+String(ap_ssid));
+  display.display();
+  display.setCursor(0, 31);
+  display.print("PASS: "+String(ap_pass));
+  display.display();
+
+  MDNS.begin("plant");
+  server.on("/", handleRoot);
+  server.on("/pump", handlePump);
+  server.begin();
+
+
+}
+
+
 // ---------- Setup ----------
 void setup() {
   Serial.begin(115200);
+
+  // determine boot mode
+  pinMode(MODE_PIN, INPUT);
+
+  int modeRead = digitalRead(MODE_PIN);
+
+  if (modeRead == HIGH) {
+    bootMode = MODE_MQTT;
+  } else {
+    bootMode = MODE_AP;
+  }
 
   // ADC attenuation: ensure range covers full values if needed
   // Default is fine for many boards but you can set attenuation if required:
   // analogSetPinAttenuation(moisturePins[i], ADC_11db);
 
-  // pump pins init - set OFF (HIGH)
+  // Pump pins init - set OFF (HIGH)
   for (int i=0;i<4;i++) {
     pinMode(pumpPins[i], OUTPUT);
     digitalWrite(pumpPins[i], HIGH); // OFF
   }
+
+  // Ultrasonic sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
 
   // display init
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -200,15 +354,33 @@ void setup() {
   display.print("WiFi connecting...");
   display.display();
 
-  WiFi.begin(ssid, password);
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(200);
-    // keep the device responsive - break after long timeout if you want
-    if (millis() - wifiStart > 20000) { // 20s timeout - optional
-      break;
+  if (bootMode == MODE_AP) {
+
+    startAccessPoint();
+
+  // do NOT start MQTT or NTP in AP mode
+    return;
+
+  } else {
+
+    WiFi.mode(WIFI_STA);
+
+    WiFi.begin(ssid, password);
+
+    unsigned long wifiStart = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(200);
+      if (millis() - wifiStart > 20000) break;
     }
-  }
+
+    mqtt.setServer(mqtt_server, 1883);
+    mqtt.setCallback(mqttCallback);
+    reconnectMQTT();
+
+    timeClient.begin();
+    timeClient.update();
+}
+  // show WiFi status
 
   display.clearDisplay();
   if (WiFi.status() == WL_CONNECTED) {
@@ -251,28 +423,63 @@ void setup() {
 }
 
 // ---------- Loop ----------
+// ---------- Loop ----------
 void loop() {
-  if (!mqtt.connected()) reconnectMQTT();
-  mqtt.loop();
-
   unsigned long now = millis();
 
-  // read moisture values for OLED every second
-  if (now - lastMoistureRead >= 1000) {
-    lastMoistureRead = now;
-    readMoistureSensors();
+  // --- Common Logic (Runs in both AP and MQTT modes) ---
+  
+  // Handle timed pump turn-off
+  for (int i = 0; i < 4; i++) {
+    if (pumpState[i] && pumpOffTime[i] > 0 && now >= pumpOffTime[i]) {
+      setPumpState(i, false);
+      pumpOffTime[i] = 0;
+    }
   }
 
-  // publish moisture to MQTT every 5 seconds
-  if (now - lastMoistureMQTT >= 5000) {
-    lastMoistureMQTT = now;
-    publishMoistureValuesMQTT();
+  // Read water level sensor every 2 seconds
+  if (now - lastWaterRead > 2000) {
+    lastWaterRead = now;
+    long d = readWaterDistanceCM();
+    if (d > 0) {
+      waterLevelPercent = waterPercentFromDistance(d);
+    }
   }
 
-  // update clock every second and redraw display
-  if (now - lastClockUpdate >= 1000) {
-    lastClockUpdate = now;
-    timeClient.update();   // update NTP display time - not heavy
+  // --- Mode Specific Logic ---
+
+  if (bootMode == MODE_AP) {
+    // AP MODE: Just handle web requests
+    server.handleClient();
+  } 
+  else {
+    // MQTT MODE: Handle MQTT connection and periodic updates
+    if (!mqtt.connected()) reconnectMQTT();
+    mqtt.loop();
+
+    // Read moisture values for OLED every second
+    if (now - lastMoistureRead >= 1000) {
+      lastMoistureRead = now;
+      readMoistureSensors();
+    }
+
+    // Publish moisture to MQTT every 5 seconds
+    if (now - lastMoistureMQTT >= 5000) {
+      lastMoistureMQTT = now;
+      publishMoistureValuesMQTT();
+    }
+
+    // Update clock every second
+    if (now - lastClockUpdate >= 1000) {
+      lastClockUpdate = now;
+      timeClient.update();
+    }
+  }
+
+  // Redraw OLED every second (Always keep the screen updated)
+  static unsigned long lastOledDraw = 0;
+  if (now - lastOledDraw >= 1000) {
+    lastOledDraw = now;
     drawOLED();
   }
-}
+} // <--- This was the missing bracket!
