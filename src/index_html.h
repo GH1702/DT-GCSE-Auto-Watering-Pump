@@ -7,6 +7,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plant Control & Debug</title>
   <style>
@@ -20,15 +21,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .stat { font-size: 1.2em; font-weight: bold; }
     .hidden { display: none; }
     
-    /* Buttons and Icons */
     button { cursor: pointer; padding: 8px 12px; border-radius: 4px; border: 1px solid #ccc; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
     .on-btn { background-color: #e7f3e7; color: #2e7d32; border: 1px solid #2e7d32; }
     .off-btn { background-color: #ffebee; color: #c62828; border: 1px solid #c62828; }
     .debug-btn { background-color: #555; color: white; margin: 10px auto; border: none; }
     .save-btn { background-color: #2196F3; color: white; border: none; padding: 5px 10px; }
-    .reset-btn { background-color: #f44336; color: white; border: none; padding: 8px; }
     
-    /* New Warning Box Design */
+    /* Warning Box */
     .warning-box { 
       background-color: #ffeb3b; 
       color: #000; 
@@ -45,9 +44,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .revert-btn { background-color: #f44336; color: white; border: none; padding: 8px 15px; border-radius: 5px; font-size: 0.9em; }
     .override-active { border: 2px solid #f44336 !important; background-color: #fff5f5; }
 
-    svg { width: 18px; height: 18px; fill: currentColor; }
     #status-dot { height: 12px; width: 12px; background-color: #bbb; border-radius: 50%; display: inline-block; margin-right: 5px; }
     .updated-text { font-size: 0.8em; color: #666; margin-top: 5px; }
+    .excl { font-size: 1.5em; color: #d32f2f; }
   </style>
 </head>
 <body>
@@ -60,6 +59,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="warning-content">
           <span class="excl">&#9888;</span>
           <span>OVERRIDE ACTIVE: SAFETY OFF</span>
+          <span class="excl">&#9888;</span>
         </div>
         <button class="revert-btn" onclick="disableOverride()">REVERT TO SAFETY</button>
       </div>
@@ -94,55 +94,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <p style="font-size: 0.85em; color: #666;">Standard mode: 10s max safety limit applied.</p>
       </div>
 
-      <button class="debug-btn" onclick="toggleDebug(true)">
-        <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.5 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
-        Open Calibration & Debug
-      </button>
+      <button class="debug-btn" onclick="toggleDebug(true)">Open Calibration & Debug</button>
     </div>
 
     <div id="debug-view" class="hidden">
       <h2>System Calibration</h2>
-      <button class="debug-btn" onclick="toggleDebug(false)">
-        <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-        Back to Dashboard
-      </button>
+      <button class="debug-btn" onclick="toggleDebug(false)">Back to Dashboard</button>
 
       <div class="card" id="override-card">
         <h3>Safety Overrides</h3>
-        <p>Warning: Enabling this allows pumps to run indefinitely.</p>
+        <p>Enabling this allows pumps to run indefinitely (Service Mode).</p>
         <label style="font-size: 1.2em; cursor: pointer; display: block; padding: 10px;">
           <input type="checkbox" id="overrideCheck" onchange="toggleOverride()"> 
           Enable Manual Override
         </label>
       </div>
       
-      <div class="card">
-        <h3>Water Tank Calibration</h3>
-        <p>Current Raw: <span id="wRaw" class="stat">--</span> cm</p>
-        <div style="display:flex; justify-content:center; gap:10px; flex-wrap: wrap;">
-          <button class="save-btn" onclick="saveCal(0, 'waterFull', 'Tank FULL')">Set 100%</button>
-          <button class="save-btn" onclick="saveCal(0, 'waterEmpty', 'Tank EMPTY')">Set 0%</button>
-        </div>
       </div>
-
-      <div class="card">
-        <h3>Moisture Calibration (Raw)</h3>
-        <table>
-          <tr><th>Sensor</th><th>Raw</th><th>Wet</th><th>Dry</th></tr>
-          <script>
-            for(let i=1; i<=4; i++) {
-              document.write(`
-                <tr>
-                  <td>M${i}</td>
-                  <td><span id="raw${i}">--</span></td>
-                  <td><button class="save-btn" onclick="saveCal(${i}, 'wet', 'M${i} Wet')">Set</button></td>
-                  <td><button class="save-btn" onclick="saveCal(${i}, 'dry', 'M${i} Dry')">Set</button></td>
-                </tr>`);
-            }
-          </script>
-        </table>
-      </div>
-    </div>
   </div>
 
   <script>
@@ -154,7 +122,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     function toggleOverride() {
       var checkBox = document.getElementById("overrideCheck");
       if (checkBox.checked) {
-        if (confirm("DANGER: Disabling safety limits can flood plants. Continue?")) {
+        if (confirm("ARE YOU SURE? This disables the 10-second safety limit. The pumps will stay on until you manually turn them off.")) {
           setOverride(1);
         } else {
           checkBox.checked = false;
@@ -165,7 +133,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
 
     function disableOverride() {
-      setOverride(0);
+      if(confirm("Return to safety mode? (10s limits will be re-applied)")) {
+        setOverride(0);
+      }
     }
 
     function setOverride(val) {
@@ -177,10 +147,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       else document.getElementById("override-card").classList.remove("override-active");
     }
 
-    function syncTime() {
-      fetch("/sync?epoch=" + Math.floor(Date.now() / 1000));
-    }
-
     function startPump(p) { 
       let t = document.getElementById("t" + p).value;
       fetch("/pump?p=" + p + "&t=" + t); 
@@ -188,42 +154,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     function controlPump(a, p) { fetch("/pump?" + a + "=" + p); }
 
-    function saveCal(id, type, label) {
-      let rawVal = (type.startsWith('water')) ? 
-                   document.getElementById('wRaw').innerText : 
-                   document.getElementById('raw' + id).innerText;
-      if(rawVal === "--") return;
-      if (confirm("Save " + label + " as " + rawVal + "?")) {
-        fetch(`/calibrate?sensor=${id}&type=${type}&val=${rawVal}`);
-      }
-    }
-
     function updateStatus() {
-      fetch('/status')
-        .then(response => response.json())
-        .then(data => {
-          document.getElementById("waterLvl").innerText = data.water;
-          for(let i=1; i<=4; i++) {
-            let mEl = document.getElementById("m" + i);
-            if(mEl) mEl.innerText = data.m[i-1];
-            let rEl = document.getElementById("raw" + i);
-            if(rEl) rEl.innerText = data.raw[i-1];
-          }
-          if(!document.getElementById('debug-view').classList.contains('hidden')) {
-            document.getElementById("wRaw").innerText = data.waterRaw;
-          }
-          document.getElementById("status-dot").style.backgroundColor = "#4CAF50";
-          document.getElementById("conn-status").innerText = "Connected";
-          document.getElementById("last-upd").innerText = new Date().toLocaleTimeString();
-        })
-        .catch(err => {
-          document.getElementById("status-dot").style.backgroundColor = "#f44336";
-          document.getElementById("conn-status").innerText = "Offline";
-        });
+      fetch('/status').then(response => response.json()).then(data => {
+        document.getElementById("waterLvl").innerText = data.water;
+        for(let i=1; i<=4; i++) {
+          let mEl = document.getElementById("m" + i);
+          if(mEl) mEl.innerText = data.m[i-1];
+        }
+        document.getElementById("status-dot").style.backgroundColor = "#4CAF50";
+        document.getElementById("conn-status").innerText = "Connected";
+        document.getElementById("last-upd").innerText = new Date().toLocaleTimeString();
+      }).catch(err => {
+        document.getElementById("status-dot").style.backgroundColor = "#f44336";
+        document.getElementById("conn-status").innerText = "Offline";
+      });
     }
 
     setInterval(updateStatus, 2000); 
-    setTimeout(syncTime, 1000); 
     updateStatus();
   </script>
 </body>
