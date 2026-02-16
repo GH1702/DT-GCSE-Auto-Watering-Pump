@@ -110,25 +110,37 @@ void publishPumpState(int idx) {
 void activatePump(int idx, int seconds = 0) {
   if (idx < 0 || idx >= 4) return;
   
-  digitalWrite(pumpPins[idx], LOW); 
+  // 1. Capture the start time FIRST
+  unsigned long startTime = millis();
+  
+  // 2. Set the variables BEFORE physically turning the pin on
+  pumpStartTime[idx] = startTime;
   pumpActive[idx] = true;
-  pumpStartTime[idx] = millis();
 
   if (!manualOverride) {
-    unsigned long maxDuration = (seconds == 0 || seconds > pumpTimeoutS) ? (unsigned long)pumpTimeoutS : (unsigned long)seconds;
-    pumpOffTime[idx] = millis() + (maxDuration * 1000UL);
+    // Determine duration: use provided seconds or default to pumpTimeoutS
+    unsigned long runSecs = (seconds > 0 && seconds <= pumpTimeoutS) ? (unsigned long)seconds : (unsigned long)pumpTimeoutS;
+    pumpOffTime[idx] = startTime + (runSecs * 1000UL);
   } else {
-    pumpOffTime[idx] = (seconds > 0) ? (millis() + (unsigned long)seconds * 1000UL) : 0;
+    // In manual mode, only set an off time if a specific duration was sent
+    pumpOffTime[idx] = (seconds > 0) ? (startTime + (unsigned long)seconds * 1000UL) : 0;
   }
+
+  // 3. Physically activate
+  digitalWrite(pumpPins[idx], LOW); 
   publishPumpState(idx);
+  
+  Serial.printf("PUMP %d START: StartTime=%lu, OffTime=%lu\n", idx+1, pumpStartTime[idx], pumpOffTime[idx]);
 }
 
 void stopPump(int idx) {
   digitalWrite(pumpPins[idx], HIGH);
   pumpActive[idx] = false;
   pumpOffTime[idx] = 0;
+  pumpStartTime[idx] = 0;
   publishPumpState(idx);
 }
+
 
 // ============================================================
 // ====================== WEB HANDLERS ========================
@@ -250,39 +262,95 @@ void setup() {
   Serial.println("System Ready");
 }
 
-void loop() {
-  unsigned long now = millis();
+void loop()
+{
+  unsigned long now = millis(); // Single time reference for the entire loop
   server.handleClient();
 
-  if (bootMode == MODE_MQTT) {
-    if (!mqtt.connected()) reconnectMQTT();
+  if (bootMode == MODE_MQTT)
+  {
+    if (!mqtt.connected())
+      reconnectMQTT();
     mqtt.loop();
   }
 
-  // --- Pump Safety & Timers ---
-  for (int i = 0; i < 4; i++) {
-    if (pumpActive[i]) {
-      bool timedOut = (pumpOffTime[i] > 0 && now >= pumpOffTime[i]);
-      bool safetyHit = (!manualOverride && (now - pumpStartTime[i] > (unsigned long)pumpTimeoutS * 1000UL));
-      if (timedOut || safetyHit) stopPump(i);
+  // --- 1. PUMP SAFETY & TIMERS ---
+  for (int i = 0; i < 4; i++)
+  {
+    // Only process if the pump is actually marked as running
+    if (pumpActive[i])
+    {
+
+      // Calculate elapsed time carefully
+      unsigned long elapsed = millis() - pumpStartTime[i];
+
+      bool timedOut = (pumpOffTime[i] > 0 && millis() >= pumpOffTime[i]);
+
+      bool safetyHit = false;
+      if (!manualOverride && pumpStartTime[i] > 0)
+      {
+        unsigned long maxAllowed = (unsigned long)pumpTimeoutS * 1000UL;
+        if (millis() - pumpStartTime[i] > maxAllowed)
+          safetyHit = true;
+      }
+
+      Serial.printf("DEBUG P%d: start=%lu now=%lu elapsed=%lu offTime=%lu\n",
+                    i + 1, pumpStartTime[i], now, elapsed, pumpOffTime[i]);
+
+      if (timedOut || safetyHit)
+      {
+        stopPump(i); // This handles digitalWrite HIGH and pumpActive = false
+
+        // Detailed Serial Feedback
+        Serial.print(">>> ACTION: Pump ");
+        Serial.print(i + 1);
+        if (safetyHit)
+        {
+          Serial.print(" KILLED BY SAFETY (Elapsed: ");
+          Serial.print(elapsed);
+          Serial.println("ms)");
+        }
+        else
+        {
+          Serial.println(" STOPPED BY TIMER");
+        }
+
+        // Inform MQTT if needed
+        if (bootMode == MODE_MQTT)
+          publishPumpState(i);
+      }
     }
   }
 
-  // --- Background Sensors (Staggered) ---
-  if (now - lastMoistureRead > 2000) {
-    for (int i = 0; i < 4; i++) {
-      rawMoistureValues[i] = readFastADC(moisturePins[i]); // NO DELAY VERSION
+  // --- 2. BACKGROUND SENSORS (Staggered to prevent lag) ---
+
+  // Moisture Sensors: Every 2 seconds
+  if (now - lastMoistureRead > 2000)
+  {
+    for (int i = 0; i < 4; i++)
+    {
+      rawMoistureValues[i] = readFastADC(moisturePins[i]);
       moisturePercent[i] = mapMoistToPercent(rawMoistureValues[i], i);
     }
     lastMoistureRead = now;
   }
 
-  if (now - lastWaterRead > 3000) {
+  // Water Level: Every 3 seconds
+  if (now - lastWaterRead > 3000)
+  {
     long d = readWaterDistanceCM();
-    if (d > 0) waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
+    if (d > 0)
+    {
+      waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
+    }
     lastWaterRead = now;
   }
 
+  // OLED Refresh: Every 1.5 seconds
   static unsigned long lastDraw = 0;
-  if (now - lastDraw > 1500) { drawOLED(); lastDraw = now; }
+  if (now - lastDraw > 1500)
+  {
+    drawOLED();
+    lastDraw = now;
+  }
 }
