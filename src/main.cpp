@@ -161,26 +161,35 @@ void handleStatus() {
 }
 
 void handlePump() {
-  // 1. Check for Timed Request first (p=1&t=10)
+  // Check if this is a Timed Request (p=1&t=10)
   if (server.hasArg("p") && server.hasArg("t")) {
-    int p = server.arg("p").toInt() - 1;
-    int t = server.arg("t").toInt();
-    Serial.printf("Web UI: Timed Run Pump %d for %d seconds\n", p + 1, t);
-    activatePump(p, t);
+    int pIdx = server.arg("p").toInt() - 1;
+    int duration = server.arg("t").toInt();
+    
+    // Safety check for indices
+    if (pIdx >= 0 && pIdx < 4) {
+      Serial.printf("WEB: Timed Run P%d for %ds\n", pIdx + 1, duration);
+      activatePump(pIdx, duration);
+    }
   } 
-  // 2. Check for simple "On" (infinite/default safety)
+  // Check for simple Manual ON (uses default safety timeout)
   else if (server.hasArg("on")) {
-    int p = server.arg("on").toInt() - 1;
-    Serial.printf("Web UI: Simple ON Pump %d\n", p + 1);
-    activatePump(p); 
+    int pIdx = server.arg("on").toInt() - 1;
+    if (pIdx >= 0 && pIdx < 4) {
+      Serial.printf("WEB: Manual ON P%d\n", pIdx + 1);
+      activatePump(pIdx); 
+    }
   } 
-  // 3. Check for simple "Off"
+  // Check for simple Manual OFF
   else if (server.hasArg("off")) {
-    int p = server.arg("off").toInt() - 1;
-    Serial.printf("Web UI: Simple OFF Pump %d\n", p + 1);
-    stopPump(p);
+    int pIdx = server.arg("off").toInt() - 1;
+    if (pIdx >= 0 && pIdx < 4) {
+      Serial.printf("WEB: Manual OFF P%d\n", pIdx + 1);
+      stopPump(pIdx);
+    }
   }
 
+  // Standard web response to prevent browser hang
   server.sendHeader("Location", "/");
   server.send(303);
 }
@@ -188,12 +197,40 @@ void handlePump() {
 void handleCalibrate() {
   if (server.hasArg("type")) {
     String type = server.arg("type");
+    int sensorIdx = server.hasArg("sensor") ? server.arg("sensor").toInt() : 0;
+    int val = server.arg("val").toInt();
+
     preferences.begin("calib", false);
-    if (type == "override") manualOverride = (server.arg("val").toInt() == 1);
-    else if (type == "setLimit") { pumpTimeoutS = server.arg("val").toInt(); preferences.putInt("pTimeout", pumpTimeoutS); }
-    // Add other calibration types here as needed
+
+    if (type == "override") {
+      manualOverride = (val == 1);
+    } 
+    else if (type == "waterFull") {
+      waterMaxCM = val;
+      preferences.putInt("wMax", waterMaxCM);
+    } 
+    else if (type == "waterEmpty") {
+      waterMinCM = val;
+      preferences.putInt("wMin", waterMinCM);
+    } 
+    else if (type == "wet") {
+      if(sensorIdx > 0) {
+        wetMin[sensorIdx-1] = val;
+        String key = "wet" + String(sensorIdx);
+        preferences.putInt(key.c_str(), val);
+      }
+    } 
+    else if (type == "dry") {
+      if(sensorIdx > 0) {
+        dryMax[sensorIdx-1] = val;
+        String key = "dry" + String(sensorIdx);
+        preferences.putInt(key.c_str(), val);
+      }
+    }
+
     preferences.end();
     server.send(200, "text/plain", "OK");
+    Serial.printf("CALIB: %s set to %d\n", type.c_str(), val);
   }
 }
 

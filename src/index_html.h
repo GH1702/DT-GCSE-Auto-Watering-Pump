@@ -115,20 +115,27 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
       <div class="card">
         <table>
-          <tr><th>Pump</th><th>Moisture</th><th>Timed Run</th><th>Manual</th></tr>
-          <script>
-            for(let i=1; i<=4; i++) {
-              document.write(`<tr>
-                <td>P${i}</td>
-                <td><span id="m${i}">--</span>%</td>
-                <td><input type="number" id="t${i}" value="10" style="width:45px"> <button onclick="startPump(${i})">Go</button></td>
-                <td>
-                  <button class="on-btn" onclick="controlPump('on', ${i})">ON</button>
-                  <button class="off-btn" onclick="controlPump('off', ${i})">OFF</button>
-                </td>
-              </tr>`);
-            }
-          </script>
+          <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
+          <tr>
+            <td>P1</td><td><span id="m1">--</span>%</td>
+            <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
+            <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
+          </tr>
+          <tr>
+            <td>P2</td><td><span id="m2">--</span>%</td>
+            <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
+            <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
+          </tr>
+          <tr>
+            <td>P3</td><td><span id="m3">--</span>%</td>
+            <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
+            <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
+          </tr>
+          <tr>
+            <td>P4</td><td><span id="m4">--</span>%</td>
+            <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
+            <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
+          </tr>
         </table>
       </div>
     </div>
@@ -163,16 +170,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <h3>Moisture Calibration (Raw)</h3>
         <table>
           <tr><th>Sensor</th><th>Raw</th><th>Wet</th><th>Dry</th></tr>
-          <script>
-            for(let i=1; i<=4; i++) {
-              document.write(`<tr>
-                <td>M${i}</td>
-                <td><span id="raw${i}">--</span></td>
-                <td><button class="save-btn" onclick="saveCal(${i}, 'wet', 'M${i} Wet')">Set</button></td>
-                <td><button class="save-btn" onclick="saveCal(${i}, 'dry', 'M${i} Dry')">Set</button></td>
-              </tr>`);
-            }
-          </script>
+          <tr><td>M1</td><td><span id="raw1">--</span></td><td><button class="save-btn" onclick="saveCal(1, 'wet', 'M1 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(1, 'dry', 'M1 Dry')">Set</button></td></tr>
+          <tr><td>M2</td><td><span id="raw2">--</span></td><td><button class="save-btn" onclick="saveCal(2, 'wet', 'M2 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(2, 'dry', 'M2 Dry')">Set</button></td></tr>
+          <tr><td>M3</td><td><span id="raw3">--</span></td><td><button class="save-btn" onclick="saveCal(3, 'wet', 'M3 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(3, 'dry', 'M3 Dry')">Set</button></td></tr>
+          <tr><td>M4</td><td><span id="raw4">--</span></td><td><button class="save-btn" onclick="saveCal(4, 'wet', 'M4 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(4, 'dry', 'M4 Dry')">Set</button></td></tr>
         </table>
       </div>
     </div>
@@ -286,7 +287,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
 
     function disableOverride() { setOverride(0); }
-    function startPump(p) { fetch("/pump?p=" + p + "&t=" + document.getElementById("t" + p).value); }
+
+    function startPump(p) { 
+      let t = document.getElementById("t" + p).value;
+      if (!t || t <= 0) t = 10;
+      console.log("Starting pump " + p + " for " + t + "s");
+      fetch("/pump?p=" + p + "&t=" + t); 
+    }
+
     function controlPump(a, p) { fetch("/pump?" + a + "=" + p); }
 
     function saveCal(id, type, label) {
@@ -425,7 +433,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             rangeStr: mode === 'smart' ? document.getElementById('range-text').innerText : ''
         };
 
-        // Note: In a real ESP32 project, you would add a fetch() here to send 'data' to your server
         if(editId) {
             const idx = routines.findIndex(r => r.id === editId);
             routines[idx] = data;
@@ -441,7 +448,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         routines.forEach(r => {
             const item = document.createElement('div');
             item.className = 'routine-item';
-            
             let timeInfo = r.mode === 'static' ? r.time : `${r.rangeStr} (${r.inv ? 'Inactive' : 'Active'})`;
             let triggerInfo = r.mode === 'static' ? `${r.val}ml` : `${r.val}% Threshold`;
             let sched = r.days.map((on, i) => on ? dayNames[i] : '').filter(n => n!=='').join(' ');
@@ -487,10 +493,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       fetch('/status').then(r => r.json()).then(data => {
         document.getElementById("waterLvl").innerText = data.water;
         for(let i=1; i<=4; i++) {
-          if(document.getElementById("m" + i)) document.getElementById("m" + i).innerText = data.m[i-1];
-          if(document.getElementById("raw" + i)) document.getElementById("raw" + i).innerText = data.raw[i-1];
+          let m = document.getElementById("m" + i);
+          let r = document.getElementById("raw" + i);
+          if(m) m.innerText = data.m[i-1];
+          if(r) r.innerText = data.raw[i-1];
         }
-        if(!document.getElementById('debug-view').classList.contains('hidden')) document.getElementById("wRaw").innerText = data.waterRaw;
+        let wr = document.getElementById("wRaw");
+        if(wr && !document.getElementById('debug-view').classList.contains('hidden')) {
+          wr.innerText = data.waterRaw;
+        }
         document.getElementById("status-dot").style.backgroundColor = "#4CAF50";
         document.getElementById("conn-status").innerText = "Connected";
         document.getElementById("last-upd").innerText = new Date().toLocaleTimeString();
