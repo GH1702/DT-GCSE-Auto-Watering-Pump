@@ -110,27 +110,31 @@ void publishPumpState(int idx) {
 void activatePump(int idx, int seconds = 0) {
   if (idx < 0 || idx >= 4) return;
   
-  // 1. Capture the start time FIRST
   unsigned long startTime = millis();
-  
-  // 2. Set the variables BEFORE physically turning the pin on
   pumpStartTime[idx] = startTime;
   pumpActive[idx] = true;
 
+  // Ensure seconds is never negative or weirdly large
+  unsigned long duration = (unsigned long)seconds;
+
   if (!manualOverride) {
-    // Determine duration: use provided seconds or default to pumpTimeoutS
-    unsigned long runSecs = (seconds > 0 && seconds <= pumpTimeoutS) ? (unsigned long)seconds : (unsigned long)pumpTimeoutS;
-    pumpOffTime[idx] = startTime + (runSecs * 1000UL);
+    // If no seconds provided, or if it exceeds safety limit, cap it
+    if (duration == 0 || duration > (unsigned long)pumpTimeoutS) {
+      duration = (unsigned long)pumpTimeoutS;
+    }
+    pumpOffTime[idx] = startTime + (duration * 1000UL);
   } else {
-    // In manual mode, only set an off time if a specific duration was sent
-    pumpOffTime[idx] = (seconds > 0) ? (startTime + (unsigned long)seconds * 1000UL) : 0;
+    // In manual mode, only set offTime if a duration was actually typed in
+    if (duration > 0) {
+      pumpOffTime[idx] = startTime + (duration * 1000UL);
+    } else {
+      pumpOffTime[idx] = 0; // Infinite
+    }
   }
 
-  // 3. Physically activate
   digitalWrite(pumpPins[idx], LOW); 
   publishPumpState(idx);
-  
-  Serial.printf("PUMP %d START: StartTime=%lu, OffTime=%lu\n", idx+1, pumpStartTime[idx], pumpOffTime[idx]);
+  Serial.printf("PUMP %d: Duration set to %lu seconds\n", idx + 1, duration);
 }
 
 void stopPump(int idx) {
@@ -157,9 +161,26 @@ void handleStatus() {
 }
 
 void handlePump() {
-  if (server.hasArg("on")) activatePump(server.arg("on").toInt() - 1);
-  else if (server.hasArg("off")) stopPump(server.arg("off").toInt() - 1);
-  else if (server.hasArg("p") && server.hasArg("t")) activatePump(server.arg("p").toInt() - 1, server.arg("t").toInt());
+  // 1. Check for Timed Request first (p=1&t=10)
+  if (server.hasArg("p") && server.hasArg("t")) {
+    int p = server.arg("p").toInt() - 1;
+    int t = server.arg("t").toInt();
+    Serial.printf("Web UI: Timed Run Pump %d for %d seconds\n", p + 1, t);
+    activatePump(p, t);
+  } 
+  // 2. Check for simple "On" (infinite/default safety)
+  else if (server.hasArg("on")) {
+    int p = server.arg("on").toInt() - 1;
+    Serial.printf("Web UI: Simple ON Pump %d\n", p + 1);
+    activatePump(p); 
+  } 
+  // 3. Check for simple "Off"
+  else if (server.hasArg("off")) {
+    int p = server.arg("off").toInt() - 1;
+    Serial.printf("Web UI: Simple OFF Pump %d\n", p + 1);
+    stopPump(p);
+  }
+
   server.sendHeader("Location", "/");
   server.send(303);
 }
