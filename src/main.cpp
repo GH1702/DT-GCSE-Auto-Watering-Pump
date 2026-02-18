@@ -67,6 +67,8 @@ StorageManager storage;
 CalibrationManager calibration;
 RoutineExecutor routineExec;
 AutomationExecutor automationExec;
+String routinesCache;
+String automationsCache;
 
 int waterMinCM = 30;
 int waterMaxCM = 5;
@@ -80,6 +82,7 @@ unsigned long lastWebAccessTime = 0;
 unsigned long lastRoutineCheck = 0;
 unsigned long lastAutomationCheck = 0;
 int lastMinute = -1;
+long waterLevelCM = -1;
 
 int pumpTimeoutS = 10;
 bool manualOverride = false;
@@ -152,6 +155,13 @@ long getSmoothedWaterDistance() {
   return total / valid;
 }
 
+long updateWaterLevel() {
+    long d = readWaterDistanceCM();
+    if (d > 0) {
+        waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
+    }
+    return d;  // ✅ Return the distance
+}
 
 float readTemperatureC() {
   return bmp.readTemperature();
@@ -365,6 +375,13 @@ void handleStorageInfo() {
   server.send(200, "application/json", json);
 }
 
+void loadRoutinesCache() {
+    routinesCache = storage.loadRoutines();   // returns a String
+}
+
+void loadAutomationsCache() {
+    automationsCache = storage.loadAutomations(); // returns a String
+}
 // ============================================================
 // ====================== WHATSAPP FUNCTION ===================
 // ============================================================
@@ -718,7 +735,7 @@ void loop()
   // Water level
   if (now - lastWaterRead > 3000)
   {
-    long d = getSmoothedWaterDistance();
+    long d = updateWaterLevel();
     if (d > 0)
     {
       waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
