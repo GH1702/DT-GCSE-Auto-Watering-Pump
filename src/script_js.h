@@ -590,6 +590,7 @@ function updateStatus() {
       for(let i=1; i<=4; i++) {
         document.getElementById("m" + i).innerText = data.m[i-1];
         document.getElementById("raw" + i).innerText = data.raw[i-1];
+        document.getElementById('temp').innerText = data.temperature;
       }
       if(data.waterRaw) {
         document.getElementById("wRaw").innerText = data.waterRaw;

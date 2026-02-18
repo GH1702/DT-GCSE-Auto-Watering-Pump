@@ -47,7 +47,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
   </div>
 
   <div id="main-view">
-    <h2>System Dashboard</h2>
+    <h2>DT GCSE Auto Watering Pump</h2>
     <div id="override-warn" class="warning-box">
       <span>&#9888; OVERRIDE ACTIVE: SAFETY OFF</span>
       <button class="revert-btn" onclick="disableOverride()">REVERT TO SAFETY</button>
@@ -56,6 +56,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     <div class="card status-card">
       <div><span id="status-dot"></span><span id="conn-status">Searching...</span></div>
       <div>Tank: <span id="waterLvl" class="stat">--</span>%</div>
+      <div>Temp: <span id="temp" class="stat">--</span>°C</div>
       <div class="updated-text">Synced: <span id="last-upd">Never</span></div>
     </div>
     

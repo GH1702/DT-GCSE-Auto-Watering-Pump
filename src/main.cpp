@@ -216,32 +216,21 @@ void publishPumpState(int idx) {
 }
 
 // DEFAULT VALUE ONLY IN IMPLEMENTATION
-void activatePump(int idx, int seconds = 0) {
+void activatePump(int idx, int durationSec) {
   if (idx < 0 || idx >= 4) return;
-  
-  unsigned long startTime = millis();
-  pumpStartTime[idx] = startTime;
+
+  pumpStartTime[idx] = millis();
   pumpActive[idx] = true;
 
-  unsigned long duration = (unsigned long)seconds;
+  if (durationSec <= 0 || durationSec > pumpTimeoutS) durationSec = pumpTimeoutS;
 
-  if (!manualOverride) {
-    if (duration == 0 || duration > (unsigned long)pumpTimeoutS) {
-      duration = (unsigned long)pumpTimeoutS;
-    }
-    pumpOffTime[idx] = startTime + (duration * 1000UL);
-  } else {
-    if (duration > 0) {
-      pumpOffTime[idx] = startTime + (duration * 1000UL);
-    } else {
-      pumpOffTime[idx] = 0;
-    }
-  }
+  pumpOffTime[idx] = pumpStartTime[idx] + (unsigned long)durationSec * 1000UL;
 
   digitalWrite(pumpPins[idx], LOW); 
   publishPumpState(idx);
-  Serial.printf("PUMP %d: Duration set to %lu seconds\n", idx + 1, duration);
+  Serial.printf("PUMP %d: Duration set to %d seconds\n", idx+1, durationSec);
 }
+
 
 void stopPump(int idx) {
   digitalWrite(pumpPins[idx], HIGH);
@@ -481,8 +470,13 @@ void handleRoot() {
 void handleStatus() {
   lastWebAccessTime = millis();
   
-  String json = "{\"water\":" + String(waterLevelPercent) + ",";
-  json += "\"waterRaw\":" + String(readWaterDistanceCM()) + ",";
+  float tempC = readTemperatureC();   // read temperature
+  long waterRaw = readWaterDistanceCM();
+
+  String json = "{";
+  json += "\"water\":" + String(waterLevelPercent) + ",";
+  json += "\"waterRaw\":" + String(waterRaw) + ",";
+  json += "\"temperature\":" + String(tempC, 1) + ",";  // 1 decimal place
   json += "\"m\":[" + String(moisturePercent[0]) + "," + String(moisturePercent[1]) + "," 
                     + String(moisturePercent[2]) + "," + String(moisturePercent[3]) + "],";
   json += "\"raw\":[" + String(rawMoistureValues[0]) + "," + String(rawMoistureValues[1]) + "," 
@@ -490,6 +484,7 @@ void handleStatus() {
   
   server.send(200, "application/json", json);
 }
+
 
 void handlePump() {
   if (server.hasArg("p") && server.hasArg("t")) {
@@ -686,36 +681,34 @@ void setup() {
   Serial.println("System Ready");
 }
 
-void loop() {
+void loop()
+{
   unsigned long now = millis();
   server.handleClient();
 
-  if (bootMode == MODE_MQTT) {
-    if (!mqtt.connected()) reconnectMQTT();
+  if (bootMode == MODE_MQTT)
+  {
+    if (!mqtt.connected())
+      reconnectMQTT();
     mqtt.loop();
   }
 
   // Pump safety & timers
-  for (int i = 0; i < 4; i++) {
-    if (pumpActive[i]) {
-      bool timedOut = (pumpOffTime[i] > 0 && now >= pumpOffTime[i]);
-      bool safetyHit = false;
-      
-      if (!manualOverride && pumpStartTime[i] > 0) {
-        unsigned long maxAllowed = (unsigned long)pumpTimeoutS * 1000UL;
-        if (now - pumpStartTime[i] > maxAllowed) safetyHit = true;
-      }
-
-      if (timedOut || safetyHit) {
-        stopPump(i);
-        Serial.printf("PUMP %d STOPPED\n", i + 1);
-      }
+  for (int i = 0; i < 4; i++)
+  {
+    if (pumpActive[i] && pumpOffTime[i] > 0 && millis() >= pumpOffTime[i])
+    {
+      stopPump(i);
+      Serial.printf("PUMP %d STOPPED\n", i + 1);
     }
   }
+  
 
   // Moisture sensors
-  if (now - lastMoistureRead > 2000) {
-    for (int i = 0; i < 4; i++) {
+  if (now - lastMoistureRead > 2000)
+  {
+    for (int i = 0; i < 4; i++)
+    {
       rawMoistureValues[i] = readFastADC(moisturePins[i]);
       moisturePercent[i] = mapMoistToPercent(rawMoistureValues[i], i);
     }
@@ -723,63 +716,72 @@ void loop() {
   }
 
   // Water level
-  if (now - lastWaterRead > 3000) {
+  if (now - lastWaterRead > 3000)
+  {
     long d = getSmoothedWaterDistance();
-    if (d > 0) {
+    if (d > 0)
+    {
       waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
     }
     lastWaterRead = now;
   }
 
   // Routine checking
-  if (bootMode == MODE_MQTT) {
+  if (bootMode == MODE_MQTT)
+  {
     timeClient.update();
     int currentHour = timeClient.getHours();
     int currentMinute = timeClient.getMinutes();
     int currentDay = timeClient.getDay();
-    
-    if (currentMinute != lastMinute) {
+
+    if (currentMinute != lastMinute)
+    {
       lastMinute = currentMinute;
-      
+
       String routines = storage.loadRoutines();
       int duration = 0;
       int pumpToRun = routineExec.checkRoutines(
-        routines, currentDay, currentHour, currentMinute,
-        moisturePercent, duration
-      );
-      
-      if (pumpToRun >= 0 && pumpToRun < 4) {
+          routines, currentDay, currentHour, currentMinute,
+          moisturePercent, duration);
+
+      if (pumpToRun >= 0 && pumpToRun < 4)
+      {
         Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
         activatePump(pumpToRun, duration);
       }
     }
   }
-  
+
   // Automation checking
-  if (now - lastAutomationCheck > 5000) {
+  if (now - lastAutomationCheck > 5000)
+  {
     lastAutomationCheck = now;
-    
+
     String automations = storage.loadAutomations();
     int hour = bootMode == MODE_MQTT ? timeClient.getHours() : 12;
     int minute = bootMode == MODE_MQTT ? timeClient.getMinutes() : 0;
-    
+
     automationExec.checkAutomations(
-      automations, moisturePercent, waterLevelPercent,
-      pumpActive, hour, minute,
-      pumpActionCallback, whatsappActionCallback
-    );
+        automations, moisturePercent, waterLevelPercent,
+        pumpActive, hour, minute,
+        pumpActionCallback, whatsappActionCallback);
   }
-
-
 
   // OLED refresh
   static unsigned long lastDraw = 0;
-  if (now - lastDraw > 1500) {
+  if (now - lastDraw > 1500)
+  {
     drawOLED();
     lastDraw = now;
   }
-  
-  //I2C Delay
-  if (millis() - lastWaterRead > 3000) { getSmoothedWaterDistance(); }
-  if (millis() - lastDraw > 1500) { drawOLED(); }
+
+  // I2C Delay
+  if (millis() - lastWaterRead > 3000)
+  {
+    getSmoothedWaterDistance();
+  }
+  if (millis() - lastDraw > 1500)
+  {
+    drawOLED();
+  }
 }
