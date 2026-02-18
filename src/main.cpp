@@ -14,8 +14,8 @@
 #include "script_js.h"
 #include "Routines.h"
 #include <Adafruit_VL53L0X.h>
-
-
+#include <Adafruit_BMP280.h>
+#include <RTClib.h>
 
 // ---------- Boot mode ----------
 enum BootMode { MODE_MQTT, MODE_WIFI, MODE_AP };
@@ -36,8 +36,7 @@ const String baseTopic = "esp32/pumps/";
 #define SCREEN_HEIGHT 64
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-#define TRIG_PIN 16
-#define ECHO_PIN 17
+
 
 // ---------- Objects ----------
 WiFiUDP ntpUDP;
@@ -46,7 +45,11 @@ WiFiClient espClient;
 PubSubClient mqtt(espClient);
 WebServer server(80);
 Preferences preferences;
+
+// Sensor objects
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+Adafruit_BMP280 bmp;
+RTC_DS3231 rtc;
 
 // ---------- Globals ----------
 int pumpPins[4]      = {26, 25, 33, 32};
@@ -117,12 +120,89 @@ long readWaterDistanceCM() {
   VL53L0X_RangingMeasurementData_t measure;
   lox.rangingTest(&measure, false);
 
-  if (measure.RangeStatus != 4) {  // 4 = out of range
-    return measure.RangeMilliMeter / 10;  // mm → cm
-  } else {
-    return -1;  // same error behavior as before
+  if (measure.RangeStatus != 4 && measure.RangeMilliMeter > 0) {
+    long cm = measure.RangeMilliMeter / 10;
+
+    // Apply a simple linear offset correction
+    if (cm <= 10)      cm -= 3;
+    else if (cm <= 20) cm -= 2;
+    else if (cm <= 30) cm -= 1;
+
+    return cm;
+  }
+
+  return -1; // invalid reading
+}
+
+
+long getSmoothedWaterDistance() {
+  long total = 0;
+  int valid = 0;
+
+  for (int i = 0; i < 5; i++) {
+    long d = readWaterDistanceCM();
+    if (d > 0) {
+      total += d;
+      valid++;
+    }
+    delay(10);
+  }
+
+  if (valid == 0) return -1;
+  return total / valid;
+}
+
+
+float readTemperatureC() {
+  return bmp.readTemperature();
+}
+
+float readPressureHPa() {
+  return bmp.readPressure() / 100.0F;
+}
+
+
+String getCurrentTimeString() {
+  DateTime now = rtc.now();
+  
+  char buffer[9];
+  sprintf(buffer, "%02d:%02d:%02d",
+          now.hour(),
+          now.minute(),
+          now.second());
+          
+  return String(buffer);
+}
+
+void syncRTCFromWiFi() {
+  configTime(0, 0, "pool.ntp.org");
+
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    rtc.adjust(DateTime(
+      timeinfo.tm_year + 1900,
+      timeinfo.tm_mon + 1,
+      timeinfo.tm_mday,
+      timeinfo.tm_hour,
+      timeinfo.tm_min,
+      timeinfo.tm_sec
+    ));
   }
 }
+
+int getTankPercent() {
+  long distance = readWaterDistanceCM();
+  if (distance < 0) return -1;
+
+  // Prevent divide-by-zero
+  if (waterMinCM == waterMaxCM) return -1;
+
+  float percent = 100.0 * (waterMinCM - distance) / (waterMinCM - waterMaxCM);
+
+  percent = constrain(percent, 0, 100);
+  return (int)percent;
+}
+
 
 
 // ============================================================
@@ -531,8 +611,25 @@ void setup() {
   }
   
   // Initialize VL53L0X
-  Wire.begin();
-  lox.begin();
+  Wire.begin(21, 22); // SDA, SCL
+  Wire.setClock(100000); // 100 kHz
+  if (!lox.begin()) {
+    Serial.println("VL53L0X not found!");
+  }
+
+
+  // Initialize BMP280
+  if (!bmp.begin(0x76)) {
+    Serial.println("BMP280 not found!");
+  }
+
+  // Initialize RTC
+  rtc.begin();
+
+  // Sensor Serial Output
+  if (!bmp.begin(0x76)) Serial.println("BMP280 not found!");
+  if (!lox.begin()) Serial.println("VL53L0X not found!");
+  if (!rtc.begin()) Serial.println("RTC not found!");
 
   // Load calibration values
   calibration.loadAll(wetMin, dryMax, waterMinCM, waterMaxCM, pumpTimeoutS);
@@ -550,8 +647,7 @@ void setup() {
     pinMode(pumpPins[i], OUTPUT); 
     digitalWrite(pumpPins[i], HIGH); 
   }
-  pinMode(TRIG_PIN, OUTPUT); 
-  pinMode(ECHO_PIN, INPUT);
+
 
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
@@ -564,6 +660,7 @@ void setup() {
     while (WiFi.status() != WL_CONNECTED) { 
       delay(500); 
       Serial.print("."); 
+      syncRTCFromWiFi();
     }
     if (bootMode == MODE_MQTT) {
       mqtt.setServer(mqtt_server, 1883);
@@ -627,7 +724,7 @@ void loop() {
 
   // Water level
   if (now - lastWaterRead > 3000) {
-    long d = readWaterDistanceCM();
+    long d = getSmoothedWaterDistance();
     if (d > 0) {
       waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
     }
@@ -673,10 +770,16 @@ void loop() {
     );
   }
 
+
+
   // OLED refresh
   static unsigned long lastDraw = 0;
   if (now - lastDraw > 1500) {
     drawOLED();
     lastDraw = now;
   }
+  
+  //I2C Delay
+  if (millis() - lastWaterRead > 3000) { getSmoothedWaterDistance(); }
+  if (millis() - lastDraw > 1500) { drawOLED(); }
 }
