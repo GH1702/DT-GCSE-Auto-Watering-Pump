@@ -8,8 +8,14 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <ArduinoJson.h>
 #include "index_html.h"
+#include "style_css.h"
+#include "script_js.h"
 #include "Routines.h"
+#include <Adafruit_VL53L0X.h>
+
+
 
 // ---------- Boot mode ----------
 enum BootMode { MODE_MQTT, MODE_WIFI, MODE_AP };
@@ -40,6 +46,7 @@ WiFiClient espClient;
 PubSubClient mqtt(espClient);
 WebServer server(80);
 Preferences preferences;
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 // ---------- Globals ----------
 int pumpPins[4]      = {26, 25, 33, 32};
@@ -53,6 +60,11 @@ int rawMoistureValues[4] = {0,0,0,0};
 int wetMin[4] = {950, 950, 950, 950};
 int dryMax[4] = {3300, 3300, 3300, 3300};
 
+StorageManager storage;
+CalibrationManager calibration;
+RoutineExecutor routineExec;
+AutomationExecutor automationExec;
+
 int waterMinCM = 30;
 int waterMaxCM = 5;
 int waterLevelPercent = 0;
@@ -62,9 +74,21 @@ unsigned long lastMoistureRead  = 0;
 unsigned long lastMoistureMQTT  = 0;
 unsigned long lastClockUpdate   = 0;
 unsigned long lastWebAccessTime = 0;
+unsigned long lastRoutineCheck = 0;
+unsigned long lastAutomationCheck = 0;
+int lastMinute = -1;
 
 int pumpTimeoutS = 10;
 bool manualOverride = false;
+
+// ============================================================
+// =================== FORWARD DECLARATIONS ===================
+// ============================================================
+void sendWhatsAppMessage(String message);
+void pumpActionCallback(int pump, int duration);
+void whatsappActionCallback(String message);
+void activatePump(int idx, int seconds);  // NO DEFAULT HERE
+void stopPump(int idx);
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -90,12 +114,16 @@ int mapMoistToPercent(int raw, int idx) {
 }
 
 long readWaterDistanceCM() {
-  digitalWrite(TRIG_PIN, LOW); delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  long duration = pulseIn(ECHO_PIN, HIGH, 20000); // Shorter timeout to prevent hang
-  return (duration == 0) ? -1 : duration / 58;
+  VL53L0X_RangingMeasurementData_t measure;
+  lox.rangingTest(&measure, false);
+
+  if (measure.RangeStatus != 4) {  // 4 = out of range
+    return measure.RangeMilliMeter / 10;  // mm → cm
+  } else {
+    return -1;  // same error behavior as before
+  }
 }
+
 
 // ============================================================
 // ====================== PUMP LOGIC ==========================
@@ -107,6 +135,7 @@ void publishPumpState(int idx) {
   mqtt.publish(topic.c_str(), pumpActive[idx] ? "ON" : "OFF", true);
 }
 
+// DEFAULT VALUE ONLY IN IMPLEMENTATION
 void activatePump(int idx, int seconds = 0) {
   if (idx < 0 || idx >= 4) return;
   
@@ -114,21 +143,18 @@ void activatePump(int idx, int seconds = 0) {
   pumpStartTime[idx] = startTime;
   pumpActive[idx] = true;
 
-  // Ensure seconds is never negative or weirdly large
   unsigned long duration = (unsigned long)seconds;
 
   if (!manualOverride) {
-    // If no seconds provided, or if it exceeds safety limit, cap it
     if (duration == 0 || duration > (unsigned long)pumpTimeoutS) {
       duration = (unsigned long)pumpTimeoutS;
     }
     pumpOffTime[idx] = startTime + (duration * 1000UL);
   } else {
-    // In manual mode, only set offTime if a duration was actually typed in
     if (duration > 0) {
       pumpOffTime[idx] = startTime + (duration * 1000UL);
     } else {
-      pumpOffTime[idx] = 0; // Infinite
+      pumpOffTime[idx] = 0;
     }
   }
 
@@ -145,42 +171,263 @@ void stopPump(int idx) {
   publishPumpState(idx);
 }
 
+// ============================================================
+// ================= ROUTINES AND AUTOMATIONS =================
+// ============================================================
+
+void handleGetRoutines() {
+  String routines = storage.loadRoutines();
+  server.send(200, "application/json", routines);
+}
+
+void handleSaveRoutines() {
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    
+    if (storage.saveRoutines(body)) {
+      server.send(200, "text/plain", "OK");
+      Serial.println("Routines saved successfully");
+    } else {
+      server.send(500, "text/plain", "Save failed");
+    }
+  } else {
+    server.send(400, "text/plain", "No data");
+  }
+}
+
+void handleGetAutomations() {
+  String automations = storage.loadAutomations();
+  server.send(200, "application/json", automations);
+}
+
+void handleSaveAutomations() {
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    
+    if (storage.saveAutomations(body)) {
+      server.send(200, "text/plain", "OK");
+      Serial.println("Automations saved successfully");
+    } else {
+      server.send(500, "text/plain", "Save failed");
+    }
+  } else {
+    server.send(400, "text/plain", "No data");
+  }
+}
+
+void handleRunRoutine() {
+  if (server.hasArg("id")) {
+    String routineId = server.arg("id");
+    String routines = storage.loadRoutines();
+    
+    StaticJsonDocument<4096> doc;
+    deserializeJson(doc, routines);
+    JsonArray arr = doc.as<JsonArray>();
+    
+    for (JsonObject r : arr) {
+      if (String(r["id"].as<long>()) == routineId) {
+        int pump = r["p"] | 0;
+        int duration = 10;
+        
+        if (r["mode"] == "static") {
+          int amount = r["val"] | 100;
+          duration = amount / 10;
+        } else {
+          duration = 10;
+        }
+        
+        activatePump(pump - 1, duration);
+        server.send(200, "text/plain", "Routine executed");
+        return;
+      }
+    }
+    
+    server.send(404, "text/plain", "Routine not found");
+  } else {
+    server.send(400, "text/plain", "No ID");
+  }
+}
+
+void handleRunAutomation() {
+  if (server.hasArg("id")) {
+    String autoId = server.arg("id");
+    String automations = storage.loadAutomations();
+    
+    StaticJsonDocument<4096> doc;
+    deserializeJson(doc, automations);
+    JsonArray arr = doc.as<JsonArray>();
+    
+    for (JsonObject a : arr) {
+      if (String(a["id"].as<long>()) == autoId) {
+        JsonObject doAction = a["do"];
+        String type = doAction["type"] | "";
+        
+        if (type == "whatsapp") {
+          String message = doAction["message"] | "";
+          sendWhatsAppMessage(message);
+        }
+        else if (type == "pump_on") {
+          int pump = doAction["pump"] | 1;
+          int duration = doAction["duration"] | 10;
+          activatePump(pump - 1, duration);
+        }
+        else if (type == "pump_off") {
+          int pump = doAction["pump"] | 1;
+          stopPump(pump - 1);
+        }
+        
+        server.send(200, "text/plain", "Automation executed");
+        return;
+      }
+    }
+    
+    server.send(404, "text/plain", "Automation not found");
+  } else {
+    server.send(400, "text/plain", "No ID");
+  }
+}
+
+void handleStorageInfo() {
+  String json = "{";
+  json += "\"total\":" + String(SPIFFS.totalBytes()) + ",";
+  json += "\"used\":" + String(SPIFFS.usedBytes()) + ",";
+  json += "\"free\":" + String(SPIFFS.totalBytes() - SPIFFS.usedBytes());
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+// ============================================================
+// ====================== WHATSAPP FUNCTION ===================
+// ============================================================
+
+void sendWhatsAppMessage(String message) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected - cannot send WhatsApp");
+    return;
+  }
+  
+  message.replace("{tank}", String(waterLevelPercent) + "%");
+  for (int i = 0; i < 4; i++) {
+    message.replace("{sensor}", String(moisturePercent[i]) + "%");
+    message.replace("{value}", String(moisturePercent[i]) + "%");
+    message.replace("{pump}", String(i + 1));
+  }
+  
+  String encodedMsg = "";
+  for (unsigned int i = 0; i < message.length(); i++) {
+    char c = message.charAt(i);
+    if (c == ' ') encodedMsg += '+';
+    else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') encodedMsg += c;
+    else {
+      encodedMsg += '%';
+      if (c < 16) encodedMsg += '0';
+      encodedMsg += String(c, HEX);
+    }
+  }
+  
+  String url = "http://api.callmebot.com/whatsapp.php?";
+  url += "phone=+447902664891";
+  url += "&text=" + encodedMsg;
+  url += "&apikey=4458318";
+  
+  Serial.println("Sending WhatsApp: " + message);
+  
+  WiFiClient client;
+  if (client.connect("api.callmebot.com", 80)) {
+    client.print(String("GET ") + url.substring(30) + " HTTP/1.1\r\n" +
+                 "Host: api.callmebot.com\r\n" +
+                 "Connection: close\r\n\r\n");
+    
+    unsigned long timeout = millis();
+    while (client.available() == 0) {
+      if (millis() - timeout > 5000) {
+        Serial.println("WhatsApp request timeout");
+        client.stop();
+        return;
+      }
+    }
+    
+    while (client.available()) {
+      String line = client.readStringUntil('\r');
+      Serial.print(line);
+    }
+    
+    client.stop();
+    Serial.println("\nWhatsApp message sent successfully");
+  } else {
+    Serial.println("Failed to connect to callmebot API");
+  }
+}
+
+void pumpActionCallback(int pump, int duration) {
+  if (duration == 0) {
+    stopPump(pump);
+  } else {
+    activatePump(pump, duration);
+  }
+}
+
+void whatsappActionCallback(String message) {
+  sendWhatsAppMessage(message);
+}
 
 // ============================================================
 // ====================== WEB HANDLERS ========================
 // ============================================================
 
+void handleRoot() {
+  server.sendHeader("Cache-Control", "no-cache");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", ""); 
+
+  server.sendContent_P(INDEX_HTML_START);
+  
+  // Wrap CSS
+  server.sendContent_P(HTML_STYLE_OPEN);
+  server.sendContent_P(STYLE_CSS);
+  server.sendContent_P(HTML_STYLE_CLOSE);
+  
+  // Wrap JS
+  server.sendContent_P(HTML_SCRIPT_OPEN);
+  server.sendContent_P(SCRIPT_JS);
+  server.sendContent_P(HTML_SCRIPT_CLOSE);
+  
+  server.sendContent_P(INDEX_HTML_BODY);
+  server.sendContent_P(INDEX_HTML_FOOTER); // Close the tags properly
+  
+  server.sendContent("");
+}
+
 void handleStatus() {
   lastWebAccessTime = millis();
+  
   String json = "{\"water\":" + String(waterLevelPercent) + ",";
+  json += "\"waterRaw\":" + String(readWaterDistanceCM()) + ",";
   json += "\"m\":[" + String(moisturePercent[0]) + "," + String(moisturePercent[1]) + "," 
                     + String(moisturePercent[2]) + "," + String(moisturePercent[3]) + "],";
   json += "\"raw\":[" + String(rawMoistureValues[0]) + "," + String(rawMoistureValues[1]) + "," 
                       + String(rawMoistureValues[2]) + "," + String(rawMoistureValues[3]) + "]}";
+  
   server.send(200, "application/json", json);
 }
 
 void handlePump() {
-  // Check if this is a Timed Request (p=1&t=10)
   if (server.hasArg("p") && server.hasArg("t")) {
     int pIdx = server.arg("p").toInt() - 1;
     int duration = server.arg("t").toInt();
     
-    // Safety check for indices
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Timed Run P%d for %ds\n", pIdx + 1, duration);
       activatePump(pIdx, duration);
     }
   } 
-  // Check for simple Manual ON (uses default safety timeout)
   else if (server.hasArg("on")) {
     int pIdx = server.arg("on").toInt() - 1;
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Manual ON P%d\n", pIdx + 1);
-      activatePump(pIdx); 
+      activatePump(pIdx, 0);  // Use 0 to trigger default
     }
   } 
-  // Check for simple Manual OFF
   else if (server.hasArg("off")) {
     int pIdx = server.arg("off").toInt() - 1;
     if (pIdx >= 0 && pIdx < 4) {
@@ -189,7 +436,6 @@ void handlePump() {
     }
   }
 
-  // Standard web response to prevent browser hang
   server.sendHeader("Location", "/");
   server.send(303);
 }
@@ -251,10 +497,11 @@ void reconnectMQTT() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String msg = ""; for (int i=0; i<length; i++) msg += (char)payload[i];
+  String msg = ""; 
+  for (int i=0; i<length; i++) msg += (char)payload[i];
   for (int i=0; i<4; i++) {
     if (String(topic) == (baseTopic + String(i+1) + "/set")) {
-      if (msg.equalsIgnoreCase("ON")) activatePump(i);
+      if (msg.equalsIgnoreCase("ON")) activatePump(i, 0);
       else if (msg.equalsIgnoreCase("OFF")) stopPump(i);
     }
   }
@@ -277,10 +524,24 @@ void drawOLED() {
 
 void setup() {
   Serial.begin(115200);
+
+  // Initialize storage
+  if (!storage.begin()) {
+    Serial.println("FATAL: Storage initialization failed");
+  }
   
+  // Initialize VL53L0X
+  Wire.begin();
+  lox.begin();
+
+  // Load calibration values
+  calibration.loadAll(wetMin, dryMax, waterMinCM, waterMaxCM, pumpTimeoutS);
+  storage.printInfo();
+
   pinMode(SWITCH_PIN_I, INPUT_PULLUP);
   pinMode(SWITCH_PIN_II, INPUT_PULLUP);
   delay(50);
+  
   if (digitalRead(SWITCH_PIN_I) == LOW) bootMode = MODE_MQTT;
   else if (digitalRead(SWITCH_PIN_II) == LOW) bootMode = MODE_AP;
   else bootMode = MODE_WIFI;
@@ -289,22 +550,21 @@ void setup() {
     pinMode(pumpPins[i], OUTPUT); 
     digitalWrite(pumpPins[i], HIGH); 
   }
-  pinMode(TRIG_PIN, OUTPUT); pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG_PIN, OUTPUT); 
+  pinMode(ECHO_PIN, INPUT);
 
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
   display.display();
 
-  preferences.begin("calib", true);
-  pumpTimeoutS = preferences.getInt("pTimeout", 10);
-  // Load wet/dry values here...
-  preferences.end();
-
   if (bootMode == MODE_AP) {
     WiFi.softAP("ESP32-Watering", "watering123");
   } else {
     WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    while (WiFi.status() != WL_CONNECTED) { 
+      delay(500); 
+      Serial.print("."); 
+    }
     if (bootMode == MODE_MQTT) {
       mqtt.setServer(mqtt_server, 1883);
       mqtt.setCallback(mqttCallback);
@@ -312,102 +572,110 @@ void setup() {
     }
   }
 
-  server.on("/", []() { server.send(200, "text/html", INDEX_HTML); });
+  // Register web endpoints
+  server.on("/", handleRoot);  // Changed from lambda to function
   server.on("/status", handleStatus);
   server.on("/pump", handlePump);
   server.on("/calibrate", handleCalibrate);
+  server.on("/routines", HTTP_GET, handleGetRoutines);
+  server.on("/routines", HTTP_POST, handleSaveRoutines);
+  server.on("/automations", HTTP_GET, handleGetAutomations);
+  server.on("/automations", HTTP_POST, handleSaveAutomations);
+  server.on("/routine/run", HTTP_POST, handleRunRoutine);
+  server.on("/automation/run", HTTP_POST, handleRunAutomation);
+  server.on("/storage/info", HTTP_GET, handleStorageInfo);
+  
   server.begin(); 
   Serial.println("System Ready");
 }
 
-void loop()
-{
-  unsigned long now = millis(); // Single time reference for the entire loop
+void loop() {
+  unsigned long now = millis();
   server.handleClient();
 
-  if (bootMode == MODE_MQTT)
-  {
-    if (!mqtt.connected())
-      reconnectMQTT();
+  if (bootMode == MODE_MQTT) {
+    if (!mqtt.connected()) reconnectMQTT();
     mqtt.loop();
   }
 
-  // --- 1. PUMP SAFETY & TIMERS ---
-  for (int i = 0; i < 4; i++)
-  {
-    // Only process if the pump is actually marked as running
-    if (pumpActive[i])
-    {
-
-      // Calculate elapsed time carefully
-      unsigned long elapsed = millis() - pumpStartTime[i];
-
-      bool timedOut = (pumpOffTime[i] > 0 && millis() >= pumpOffTime[i]);
-
+  // Pump safety & timers
+  for (int i = 0; i < 4; i++) {
+    if (pumpActive[i]) {
+      bool timedOut = (pumpOffTime[i] > 0 && now >= pumpOffTime[i]);
       bool safetyHit = false;
-      if (!manualOverride && pumpStartTime[i] > 0)
-      {
+      
+      if (!manualOverride && pumpStartTime[i] > 0) {
         unsigned long maxAllowed = (unsigned long)pumpTimeoutS * 1000UL;
-        if (millis() - pumpStartTime[i] > maxAllowed)
-          safetyHit = true;
+        if (now - pumpStartTime[i] > maxAllowed) safetyHit = true;
       }
 
-      Serial.printf("DEBUG P%d: start=%lu now=%lu elapsed=%lu offTime=%lu\n",
-                    i + 1, pumpStartTime[i], now, elapsed, pumpOffTime[i]);
-
-      if (timedOut || safetyHit)
-      {
-        stopPump(i); // This handles digitalWrite HIGH and pumpActive = false
-
-        // Detailed Serial Feedback
-        Serial.print(">>> ACTION: Pump ");
-        Serial.print(i + 1);
-        if (safetyHit)
-        {
-          Serial.print(" KILLED BY SAFETY (Elapsed: ");
-          Serial.print(elapsed);
-          Serial.println("ms)");
-        }
-        else
-        {
-          Serial.println(" STOPPED BY TIMER");
-        }
-
-        // Inform MQTT if needed
-        if (bootMode == MODE_MQTT)
-          publishPumpState(i);
+      if (timedOut || safetyHit) {
+        stopPump(i);
+        Serial.printf("PUMP %d STOPPED\n", i + 1);
       }
     }
   }
 
-  // --- 2. BACKGROUND SENSORS (Staggered to prevent lag) ---
-
-  // Moisture Sensors: Every 2 seconds
-  if (now - lastMoistureRead > 2000)
-  {
-    for (int i = 0; i < 4; i++)
-    {
+  // Moisture sensors
+  if (now - lastMoistureRead > 2000) {
+    for (int i = 0; i < 4; i++) {
       rawMoistureValues[i] = readFastADC(moisturePins[i]);
       moisturePercent[i] = mapMoistToPercent(rawMoistureValues[i], i);
     }
     lastMoistureRead = now;
   }
 
-  // Water Level: Every 3 seconds
-  if (now - lastWaterRead > 3000)
-  {
+  // Water level
+  if (now - lastWaterRead > 3000) {
     long d = readWaterDistanceCM();
-    if (d > 0)
-    {
+    if (d > 0) {
       waterLevelPercent = map(constrain(d, waterMaxCM, waterMinCM), waterMinCM, waterMaxCM, 0, 100);
     }
     lastWaterRead = now;
   }
 
-  // OLED Refresh: Every 1.5 seconds
+  // Routine checking
+  if (bootMode == MODE_MQTT) {
+    timeClient.update();
+    int currentHour = timeClient.getHours();
+    int currentMinute = timeClient.getMinutes();
+    int currentDay = timeClient.getDay();
+    
+    if (currentMinute != lastMinute) {
+      lastMinute = currentMinute;
+      
+      String routines = storage.loadRoutines();
+      int duration = 0;
+      int pumpToRun = routineExec.checkRoutines(
+        routines, currentDay, currentHour, currentMinute,
+        moisturePercent, duration
+      );
+      
+      if (pumpToRun >= 0 && pumpToRun < 4) {
+        Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
+        activatePump(pumpToRun, duration);
+      }
+    }
+  }
+  
+  // Automation checking
+  if (now - lastAutomationCheck > 5000) {
+    lastAutomationCheck = now;
+    
+    String automations = storage.loadAutomations();
+    int hour = bootMode == MODE_MQTT ? timeClient.getHours() : 12;
+    int minute = bootMode == MODE_MQTT ? timeClient.getMinutes() : 0;
+    
+    automationExec.checkAutomations(
+      automations, moisturePercent, waterLevelPercent,
+      pumpActive, hour, minute,
+      pumpActionCallback, whatsappActionCallback
+    );
+  }
+
+  // OLED refresh
   static unsigned long lastDraw = 0;
-  if (now - lastDraw > 1500)
-  {
+  if (now - lastDraw > 1500) {
     drawOLED();
     lastDraw = now;
   }
