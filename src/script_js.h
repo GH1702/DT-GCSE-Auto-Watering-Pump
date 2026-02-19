@@ -613,6 +613,20 @@ window.addEventListener("DOMContentLoaded", function() {
   loadAutomationsFromESP();
 });
 
+setInterval(function() {
+    fetch('/status').then(response => response.json()).then(data => {
+      // data.pumps should be an array like [true, false, false, true]
+      for (let i = 0; i < 4; i++) {
+        const el = document.getElementById('ind' + i);
+        if (data.pumps[i]) {
+          el.classList.add('active');
+        } else {
+          el.classList.remove('active');
+        }
+      }
+    });
+  }, 1000); // Update every 1 second
+
 )rawliteral"; // <--- Added the semicolon here
 
 #endif

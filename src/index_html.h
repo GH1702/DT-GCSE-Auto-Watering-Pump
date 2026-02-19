@@ -18,7 +18,6 @@ const char HTML_STYLE_CLOSE[] PROGMEM = "</style>";
 const char HTML_SCRIPT_OPEN[] PROGMEM = "<script>";
 const char HTML_SCRIPT_CLOSE[] PROGMEM = "</script>";
 
-
 // BRICK 2: Your redesigned UI Body
 const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
 </head>
@@ -60,32 +59,35 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <div class="updated-text">Synced: <span id="last-upd">Never</span></div>
     </div>
     
-    <div class="card">
-      <table>
-        <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
-        <tr>
-          <td>P1</td><td><span id="m1">--</span>%</td>
-          <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
-          <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
-        </tr>
-        <tr>
-          <td>P2</td><td><span id="m2">--</span>%</td>
-          <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
-          <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
-        </tr>
-        <tr>
-          <td>P3</td><td><span id="m3">--</span>%</td>
-          <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
-          <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
-        </tr>
-        <tr>
-          <td>P4</td><td><span id="m4">--</span>%</td>
-          <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
-          <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
-        </tr>
-      </table>
-    </div>
-  </div>
+<div class="card">
+  <table>
+    <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
+    <tr>
+      <td><span id="ind0" class="indicator"></span> P1</td>
+      <td><span id="m1">--</span>%</td>
+      <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
+      <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
+    </tr>
+    <tr>
+      <td><span id="ind1" class="indicator"></span> P2</td>
+      <td><span id="m2">--</span>%</td>
+      <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
+      <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
+    </tr>
+    <tr>
+      <td><span id="ind2" class="indicator"></span> P3</td>
+      <td><span id="m3">--</span>%</td>
+      <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
+      <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
+    </tr>
+    <tr>
+      <td><span id="ind3" class="indicator"></span> P4</td>
+      <td><span id="m4">--</span>%</td>
+      <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
+      <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
+    </tr>
+  </table>
+</div>
 
   <div id="routine-view" class="hidden">
     <div class="card">

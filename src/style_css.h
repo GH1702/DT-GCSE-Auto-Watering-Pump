@@ -547,6 +547,20 @@ svg.nav-icon {
   border-left: 3px solid var(--primary);
 }
 
+.indicator {
+    height: 12px;
+    width: 12px;
+    background-color: #bbb; /* Off color (Grey) */
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 10px;
+    transition: background-color 0.3s;
+  }
+  .active {
+    background-color: #4CAF50; /* On color (Green) */
+    box-shadow: 0 0 8px #4CAF50;
+  }
+
 .automation-detail strong {
   color: var(--primary);
 }

@@ -626,13 +626,22 @@ void handleRoot() {
 void handleStatus() {
   lastWebAccessTime = millis();
   
-  float tempC = readTemperatureC();   // read temperature
+  float tempC = readTemperatureC();
   long waterRaw = readWaterDistanceCM();
 
   String json = "{";
+  // --- Pump Status Array ---
+  json += "\"pumps\":[";
+  for (int i = 0; i < 4; i++) {
+    json += pumpActive[i] ? "true" : "false";
+    if (i < 3) json += ",";
+  }
+  json += "],";
+
+  // --- Environmental Data ---
   json += "\"water\":" + String(waterLevelPercent) + ",";
   json += "\"waterRaw\":" + String(waterRaw) + ",";
-  json += "\"temperature\":" + String(tempC, 1) + ",";  // 1 decimal place
+  json += "\"temperature\":" + String(tempC, 1) + ",";
   json += "\"m\":[" + String(moisturePercent[0]) + "," + String(moisturePercent[1]) + "," 
                     + String(moisturePercent[2]) + "," + String(moisturePercent[3]) + "],";
   json += "\"raw\":[" + String(rawMoistureValues[0]) + "," + String(rawMoistureValues[1]) + "," 
@@ -821,37 +830,30 @@ void setup() {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(5, 24); // Adjusted cursor for "Booting..."
+  display.setCursor(5, 24); 
   display.print("Booting...");
   display.display();
 
-// --- 2. HIGH-SPEED 2-SECOND ANIMATION ---
+  // --- 2. HIGH-SPEED 2-SECOND ANIMATION ---
   unsigned long bootStart = millis();
   while (millis() - bootStart < 2000) {
     unsigned long elapsed = millis() - bootStart;
     int pct = (elapsed * 100) / 2000;
-    
-    // INCREASE THIS: sf += 2 makes it twice as fast
     bootSwirl(sf += 2);   
-    
     drawProgressBar(pct);
-    
-    // DECREASE THIS: 10ms is about the limit for stable OLED updates
     delay(10); 
   }
 
-  // 2. PIN MODES & SWITCH DETECTION
+  // --- 3. PIN MODES & SWITCH DETECTION ---
   pinMode(LID_PIN, INPUT_PULLDOWN);
   pinMode(SWITCH_PIN_I, INPUT_PULLUP);
   pinMode(SWITCH_PIN_II, INPUT_PULLUP);
   
-  // Swirl while waiting for pins to settle (replaces hard delay)
   for(int i=0; i<10; i++) { delay(10); bootSwirl(sf++); }
 
   int p1 = digitalRead(SWITCH_PIN_I);
   int p3 = digitalRead(SWITCH_PIN_II);
 
-  // Set BootMode based on your truth table
   if (p1 == HIGH && p3 == LOW) {
     bootMode = MODE_AP;
     Serial.println("Mode: AP");
@@ -863,49 +865,56 @@ void setup() {
     Serial.println("Mode: WiFi");
   }
   bootSwirl(sf++);
-  
 
-  // 3. INITIAL WIFI CONNECT (Animated)
-  if (bootMode != MODE_AP) {
-    WiFi.begin(ssid, password);
-    unsigned long startAttempt = millis();
-    // Swirl for up to 10 seconds or until connected
-    while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt < 10000)) {
-      bootSwirl(sf++);
-      delay(50);
-    }
-  }
-  bootSwirl(sf++);
-
-  // 4. STORAGE & SENSORS (Swirl after each block to prevent freezing)
+  // --- 4. STORAGE & SENSORS (CRITICAL: MUST BE BEFORE NETWORK SYNC) ---
   if (!storage.begin()) Serial.println("Storage Fail");
   bootSwirl(sf++);
 
-  // Inside setup()
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
-  } else {
-    // This is the "Magic" check:
-    if (rtc.lostPower()) {
-      Serial.println("RTC power failure! Setting to compile time...");
-      // This only runs if the battery was removed or died
-      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    }
-    
-    // If we are in a mode with WiFi, update the chip
-    if (WiFi.status() == WL_CONNECTED) {
-      syncRTCFromWiFi();
-    }
+  } else if (rtc.lostPower()) {
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
   bootSwirl(sf++);
-
-  // Sensors (BMP and Lox)
+  
   bmp.begin(0x76);
   bootSwirl(sf++);
   lox.begin();
   bootSwirl(sf++);
 
-  // 5. CALIBRATION & PUMPS
+  // --- 5. NETWORK CONFIGURATION ---
+  if (bootMode != MODE_AP) {
+    WiFi.begin(ssid, password);
+    unsigned long wifiStart = millis();
+
+    while (WiFi.status() != WL_CONNECTED && (millis() - wifiStart < 10000)) {
+      bootSwirl(sf++);
+      delay(50);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("WiFi Connected!");
+      if (MDNS.begin("plant")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("mDNS Started");
+      }
+
+      timeClient.begin();
+      delay(100); 
+      syncRTCFromWiFi(); // This is now safe because rtc.begin() happened above
+
+      if (bootMode == MODE_MQTT) {
+        mqtt.setServer(mqtt_server, 1883);
+        mqtt.setCallback(mqttCallback);
+      }
+    }
+  } else {
+    WiFi.softAP("ESP32-Watering", "watering123");
+    MDNS.begin("plant");
+  }
+  bootSwirl(sf++);
+
+  // --- 6. CALIBRATION & PUMPS ---
   calibration.loadAll(wetMin, dryMax, waterMinCM, waterMaxCM, pumpTimeoutS);
   bootSwirl(sf++);
 
@@ -915,17 +924,7 @@ void setup() {
     bootSwirl(sf++);
   }
 
-  // 6. SECONDARY NETWORK CONFIG
-  if (bootMode == MODE_AP) {
-    WiFi.softAP("ESP32-Watering", "watering123");
-  } else if (bootMode == MODE_MQTT) {
-    mqtt.setServer(mqtt_server, 1883);
-    mqtt.setCallback(mqttCallback);
-    timeClient.begin();
-  }
-  bootSwirl(sf++);
-
-  // 7. WEB SERVER ENDPOINTS
+  // --- 7. WEB SERVER ENDPOINTS ---
   server.on("/", handleRoot);
   server.on("/status", handleStatus);
   server.on("/pump", handlePump);
@@ -937,15 +936,12 @@ void setup() {
   server.on("/storage/info", handleStorageInfo);
   bootSwirl(sf++);
 
-  // 8. SYSTEM READY
+  // --- 8. SYSTEM READY ---
   server.begin(); 
   Serial.println("System Ready");
 
-  // Final visual clear
   ring.clear();
   ring.show();
-  
-  // Set LED brightness for main loop
   ring.setBrightness(255);
 }
 
