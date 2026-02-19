@@ -1013,10 +1013,11 @@ void loop()
   // --- Routine checking ---
   if (bootMode == MODE_MQTT)
   {
-    timeClient.update();
-    int currentHour = timeClient.getHours();
-    int currentMinute = timeClient.getMinutes();
-    int currentDay = timeClient.getDay();
+    // REPLACE timeClient calls with rtc.now()
+    DateTime nowRTC = rtc.now();
+    int currentHour = nowRTC.hour();
+    int currentMinute = nowRTC.minute();
+    int currentDay = nowRTC.dayOfTheWeek(); // NTPClient uses 0-6, RTClib also uses 0-6 (Sun-Sat)
 
     if (currentMinute != lastMinute)
     {
@@ -1055,5 +1056,11 @@ void loop()
   {
     drawOLED();
     lastDraw = now;
+  }
+  static unsigned long lastSync = 0;
+  if (WiFi.status() == WL_CONNECTED && (millis() - lastSync > 86400000))
+  { // Once every 24h
+    syncRTCFromWiFi();
+    lastSync = millis();
   }
 }
