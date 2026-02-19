@@ -197,19 +197,13 @@ String getCurrentTimeString() {
 }
 
 void syncRTCFromWiFi() {
-  configTime(0, 0, "pool.ntp.org");
-
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    rtc.adjust(DateTime(
-      timeinfo.tm_year + 1900,
-      timeinfo.tm_mon + 1,
-      timeinfo.tm_mday,
-      timeinfo.tm_hour,
-      timeinfo.tm_min,
-      timeinfo.tm_sec
-    ));
-  }
+  timeClient.update();
+  unsigned long epochTime = timeClient.getEpochTime();
+  
+  // Convert epoch to DateTime and save to RTC hardware
+  rtc.adjust(DateTime(epochTime)); 
+  
+  Serial.println("RTC Hardware Synced with NTP");
 }
 
 int getTankPercent() {
@@ -808,6 +802,9 @@ void drawOLED() {
     display.print("OFF");
   }
 
+  DateTime now = rtc.now();
+  Serial.printf("RTC Time: %02d:%02d:%02d\n", now.hour(), now.minute(), now.second());
+  
   display.display();
 }
 
@@ -884,12 +881,20 @@ void setup() {
   if (!storage.begin()) Serial.println("Storage Fail");
   bootSwirl(sf++);
 
-  // Initialize RTC
-  if (rtc.begin()) {
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    // If we have internet, sync time but swirl during the process
+  // Inside setup()
+  if (!rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+  } else {
+    // This is the "Magic" check:
+    if (rtc.lostPower()) {
+      Serial.println("RTC power failure! Setting to compile time...");
+      // This only runs if the battery was removed or died
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+    
+    // If we are in a mode with WiFi, update the chip
     if (WiFi.status() == WL_CONNECTED) {
-      syncRTCFromWiFi(); // Note: if this takes a while, we call swirl after
+      syncRTCFromWiFi();
     }
   }
   bootSwirl(sf++);
