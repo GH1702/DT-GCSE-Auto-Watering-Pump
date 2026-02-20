@@ -602,6 +602,7 @@ function toggleLedControlCards() {
   document.getElementById('led-moving-card').classList.toggle('hidden', mode !== 'moving');
   document.getElementById('led-smart-card').classList.toggle('hidden', mode !== 'smart');
   document.getElementById('led-breathing-card').classList.toggle('hidden', mode !== 'breathing');
+  document.getElementById('led-rgb-card').classList.toggle('hidden', mode !== 'rgb');
 }
 
 function getColorValues(prefix) {
@@ -645,6 +646,14 @@ function loadLedStatus() {
         document.getElementById('led-speed').value = data.speed;
         document.getElementById('led-speed-label').innerText = Number(data.speed).toFixed(2);
       }
+      if (typeof data.rgbSpeed === 'number') {
+        document.getElementById('led-rgb-speed').value = data.rgbSpeed;
+        document.getElementById('led-rgb-speed-label').innerText = Number(data.rgbSpeed).toFixed(2);
+      }
+      if (typeof data.brightness === 'number') {
+        document.getElementById('led-brightness').value = data.brightness;
+        document.getElementById('led-brightness-label').innerText = data.brightness;
+      }
       setColorValues('led-moving-', data.moving || []);
       setColorValues('led-smart-', data.smart || []);
       updateLedWaterPreview(data.water || 0);
@@ -657,6 +666,8 @@ function saveLedConfig() {
   const payload = {
     mode: getSelectedLedMode(),
     speed: parseFloat(document.getElementById('led-speed').value || '0.35'),
+    rgbSpeed: parseFloat(document.getElementById('led-rgb-speed').value || '1.00'),
+    brightness: parseInt(document.getElementById('led-brightness').value || '255', 10),
     static: document.getElementById('led-static-color').value,
     breathing: document.getElementById('led-breath-color').value,
     moving: getColorValues('led-moving-'),
@@ -669,18 +680,37 @@ function saveLedConfig() {
     body: JSON.stringify(payload)
   })
   .then(r => r.text())
-  .then(() => loadLedStatus())
+  .then(() => {
+    loadLedStatus();
+    showSaveToast('Settings Stored');
+  })
   .catch(e => console.error('LED save failed:', e));
+}
+
+function showSaveToast(message) {
+  const toast = document.getElementById('save-toast');
+  toast.innerText = message || 'Settings Stored';
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 1600);
 }
 
 function updateStatus() {
   fetch('/status')
     .then(r => r.json())
     .then(data => {
-      document.getElementById("waterLvl").innerText = data.water;
+      if (data.lidOff) {
+        document.getElementById("waterLvl").innerText = "LID OFF";
+      } else {
+        document.getElementById("waterLvl").innerText = data.water + "%";
+      }
       for(let i=1; i<=4; i++) {
-        document.getElementById("m" + i).innerText = data.m[i-1];
+        if (data.raw[i-1] < 900) {
+          document.getElementById("m" + i).innerText = "Disconected";
+        } else {
+          document.getElementById("m" + i).innerText = data.m[i-1] + "%";
+        }
         document.getElementById("raw" + i).innerText = data.raw[i-1];
+        document.getElementById("pumpDot" + i).classList.toggle("on", !!data.pumps[i-1]);
         document.getElementById('temp').innerText = data.temperature;
       }
       if(data.waterRaw) {
@@ -711,6 +741,12 @@ window.addEventListener("DOMContentLoaded", function() {
 
   document.getElementById('led-speed').addEventListener('input', function() {
     document.getElementById('led-speed-label').innerText = Number(this.value).toFixed(2);
+  });
+  document.getElementById('led-rgb-speed').addEventListener('input', function() {
+    document.getElementById('led-rgb-speed-label').innerText = Number(this.value).toFixed(2);
+  });
+  document.getElementById('led-brightness').addEventListener('input', function() {
+    document.getElementById('led-brightness-label').innerText = this.value;
   });
 
   document.querySelectorAll('#led-smart-card input[type="color"]').forEach(el => {

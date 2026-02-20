@@ -179,6 +179,19 @@ th {
   margin-right: 5px; 
 }
 
+.pump-dot {
+  height: 10px;
+  width: 10px;
+  background-color: #bbb;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.pump-dot.on {
+  background-color: #4CAF50;
+}
+
 .updated-text { 
   font-size: 0.8em; 
   color: #666; 
@@ -621,6 +634,27 @@ svg.nav-icon {
   border-radius: 20px;
   margin: 2px 0;
   transition: opacity 0.2s ease;
+}
+
+.save-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: #2e7d32;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.25);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 1200;
+  pointer-events: none;
+}
+
+.save-toast.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 @media (max-width: 650px) {

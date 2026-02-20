@@ -29,6 +29,9 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     <button id="nav-dash" class="nav-btn active" onclick="showView('main-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg> Dashboard
     </button>
+    <button id="nav-led" class="nav-btn" onclick="showView('led-view')">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M9 21h6v-1H9v1zm3-20C8.69 1 6 3.69 6 7c0 2.38 1.19 4.47 3 5.74V16c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.31-2.69-6-6-6z"/></svg> LED Ring
+    </button>
     <button id="nav-rout" class="nav-btn" onclick="showView('routine-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg> Routines
     </button>
@@ -44,9 +47,6 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     <button id="nav-conf" class="nav-btn" onclick="showView('debug-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.5 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg> Config
     </button>
-    <button id="nav-led" class="nav-btn" onclick="showView('led-view')">
-      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M9 21h6v-1H9v1zm3-20C8.69 1 6 3.69 6 7c0 2.38 1.19 4.47 3 5.74V16c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.31-2.69-6-6-6z"/></svg> LED Ring
-    </button>
   </div>
 
   <div id="main-view">
@@ -58,7 +58,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     
     <div class="card status-card">
       <div><span id="status-dot"></span><span id="conn-status">Searching...</span></div>
-      <div>Tank: <span id="waterLvl" class="stat">--</span>%</div>
+      <div>Tank: <span id="waterLvl" class="stat">--</span></div>
       <div>Temp: <span id="temp" class="stat">--</span>°C</div>
       <div class="updated-text">Synced: <span id="last-upd">Never</span></div>
     </div>
@@ -67,22 +67,22 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <table>
         <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
         <tr>
-          <td>P1</td><td><span id="m1">--</span>%</td>
+          <td><span id="pumpDot1" class="pump-dot"></span>P1</td><td><span id="m1">--</span></td>
           <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
         </tr>
         <tr>
-          <td>P2</td><td><span id="m2">--</span>%</td>
+          <td><span id="pumpDot2" class="pump-dot"></span>P2</td><td><span id="m2">--</span></td>
           <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
         </tr>
         <tr>
-          <td>P3</td><td><span id="m3">--</span>%</td>
+          <td><span id="pumpDot3" class="pump-dot"></span>P3</td><td><span id="m3">--</span></td>
           <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
         </tr>
         <tr>
-          <td>P4</td><td><span id="m4">--</span>%</td>
+          <td><span id="pumpDot4" class="pump-dot"></span>P4</td><td><span id="m4">--</span></td>
           <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
         </tr>
@@ -202,12 +202,26 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <input type="color" id="led-breath-color" value="#FF3C0A">
     </div>
 
+    <div class="card led-controls hidden" id="led-rgb-card">
+      <h3>RGB Circle Speed</h3>
+      <input type="range" id="led-rgb-speed" min="0.05" max="5" step="0.05" value="1.00">
+      <div id="led-rgb-speed-label" class="updated-text">1.00</div>
+    </div>
+
+    <div class="card">
+      <h3>Global Brightness</h3>
+      <input type="range" id="led-brightness" min="5" max="255" step="1" value="255">
+      <div id="led-brightness-label" class="updated-text">255</div>
+    </div>
+
     <div class="card">
       <button class="save-btn" onclick="saveLedConfig()">Apply LED Settings</button>
       <button class="save-btn" onclick="loadLedStatus()" style="margin-left:8px;">Refresh</button>
     </div>
   </div>
 </div>
+
+<div id="save-toast" class="save-toast">Settings Stored</div>
 
 <div id="modal-container" class="modal-overlay hidden">
   <div class="modal-content">

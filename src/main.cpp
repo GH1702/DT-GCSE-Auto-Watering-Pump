@@ -51,6 +51,7 @@ float waveOffset = 0.0;
 float waveSpeed = 0.08;
 float waveLength = 20.0;
 float rainbowOffset = 0.0f;
+float rainbowSpeed = 1.0f;
 float movingOffset = 0.0f;
 float movingSpeed = 0.35f;
 float breathingPhase = 0.0f;
@@ -59,6 +60,7 @@ uint32_t breathingColor = 0;
 uint32_t movingColors[5] = {0, 0, 0, 0, 0};
 uint32_t smartBandColors[5] = {0, 0, 0, 0, 0};
 int movingColorCount = 5;
+int ledBrightness = 255;
 
 // ---------- Objects ----------
 WiFiUDP ntpUDP;
@@ -460,6 +462,10 @@ void loadLedSettings() {
 
   movingSpeed = preferences.getFloat("speed", movingSpeed);
   movingSpeed = constrain(movingSpeed, 0.05f, 3.0f);
+  rainbowSpeed = preferences.getFloat("rgbspd", rainbowSpeed);
+  rainbowSpeed = constrain(rainbowSpeed, 0.05f, 5.0f);
+  ledBrightness = preferences.getInt("bright", ledBrightness);
+  ledBrightness = constrain(ledBrightness, 5, 255);
 
   staticColor = preferences.getUInt("static", staticColor);
   breathingColor = preferences.getUInt("breath", breathingColor);
@@ -480,6 +486,8 @@ void saveLedSettings() {
   preferences.begin("ledcfg", false);
   preferences.putInt("mode", (int)currentLedMode);
   preferences.putFloat("speed", movingSpeed);
+  preferences.putFloat("rgbspd", rainbowSpeed);
+  preferences.putInt("bright", ledBrightness);
   preferences.putUInt("static", staticColor);
   preferences.putUInt("breath", breathingColor);
   preferences.putInt("mcount", movingColorCount);
@@ -508,6 +516,8 @@ void handleLedStatus() {
   String json = "{";
   json += "\"mode\":\"" + ledModeToString(currentLedMode) + "\",";
   json += "\"speed\":" + String(movingSpeed, 2) + ",";
+  json += "\"rgbSpeed\":" + String(rainbowSpeed, 2) + ",";
+  json += "\"brightness\":" + String(ledBrightness) + ",";
   json += "\"water\":" + String(waterLevelPercent) + ",";
   json += "\"static\":\"" + colorToHex(staticColor) + "\",";
   json += "\"breathing\":\"" + colorToHex(breathingColor) + "\",";
@@ -555,6 +565,14 @@ void handleLedConfig() {
     gotConfig = true;
   }
 
+  if (gotConfig && doc.containsKey("rgbSpeed")) {
+    rainbowSpeed = constrain(doc["rgbSpeed"].as<float>(), 0.05f, 5.0f);
+  }
+
+  if (gotConfig && doc.containsKey("brightness")) {
+    ledBrightness = constrain(doc["brightness"].as<int>(), 5, 255);
+  }
+
   if (gotConfig && doc.containsKey("static")) {
     staticColor = parseHexColor(doc["static"].as<String>());
   }
@@ -588,6 +606,7 @@ void handleLedConfig() {
   }
 
   saveLedSettings();
+  ring.setBrightness(ledBrightness);
   Serial.printf("LED mode set to: %s\n", ledModeToString(currentLedMode).c_str());
   server.send(200, "text/plain", "OK");
 }
@@ -761,7 +780,7 @@ void drawLedRainbow() {
     ring.setPixelColor(i, ring.gamma32(ring.ColorHSV(hue, 255, 255)));
   }
   ring.show();
-  rainbowOffset += 1.0f;
+  rainbowOffset += rainbowSpeed;
   if (rainbowOffset >= 255.0f) rainbowOffset = 0.0f;
 }
 
@@ -912,11 +931,14 @@ void handleStatus() {
   String json = "{";
   json += "\"water\":" + String(waterLevelPercent) + ",";
   json += "\"waterRaw\":" + String(waterRaw) + ",";
+  json += "\"lidOff\":" + String((digitalRead(LID_PIN) == HIGH) ? "true" : "false") + ",";
   json += "\"temperature\":" + String(tempC, 1) + ",";  // 1 decimal place
   json += "\"m\":[" + String(moisturePercent[0]) + "," + String(moisturePercent[1]) + "," 
                     + String(moisturePercent[2]) + "," + String(moisturePercent[3]) + "],";
   json += "\"raw\":[" + String(rawMoistureValues[0]) + "," + String(rawMoistureValues[1]) + "," 
-                      + String(rawMoistureValues[2]) + "," + String(rawMoistureValues[3]) + "]}";
+                      + String(rawMoistureValues[2]) + "," + String(rawMoistureValues[3]) + "],";
+  json += "\"pumps\":[" + String(pumpActive[0] ? 1 : 0) + "," + String(pumpActive[1] ? 1 : 0) + "," +
+                      String(pumpActive[2] ? 1 : 0) + "," + String(pumpActive[3] ? 1 : 0) + "]}";
   
   server.send(200, "application/json", json);
 }
@@ -1031,9 +1053,9 @@ void drawOLED() {
   // Water (Left)
   display.setCursor(0, 0);
   if (digitalRead(LID_PIN) == HIGH) {
-    display.print("W:  X"); // Spaced exactly like the "M:  X" text
+    display.print("Tank:LID OFF");
   } else {
-    display.print("W:");
+    display.print("Tank:");
     display.print(waterLevelPercent);
     display.print("%");
   }
@@ -1059,7 +1081,7 @@ void drawOLED() {
     int y = 16 + i * 12;
     display.setCursor(0, y);
     if (rawMoistureValues[i] < 900) {
-      display.printf("P%d: %-3s M%d:  X",
+      display.printf("P%d:%-3s M%d:Disconected",
                      i + 1,
                      pumpActive[i] ? "ON" : "OFF",
                      i + 1);
@@ -1119,6 +1141,7 @@ void setup() {
   smartBandColors[2] = ring.Color(255, 255, 0);
   smartBandColors[3] = ring.Color(0, 180, 0);
   smartBandColors[4] = ring.Color(0, 120, 255);
+  loadLedSettings();
   
   Wire.begin(21, 22);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -1252,7 +1275,7 @@ void setup() {
   ring.show();
   
   // Set LED brightness for main loop
-  ring.setBrightness(255);
+  ring.setBrightness(ledBrightness);
 }
 
 void loop()
@@ -1284,7 +1307,7 @@ void loop()
   if (now - lastLedUpdate > 20)
   {
     lastLedUpdate = now;
-    if (lidOff) {
+    if (lidOff && !manualOverride) {
       drawBreathingRed(); // Override with Red Breath
     } else {
       switch (currentLedMode) {
