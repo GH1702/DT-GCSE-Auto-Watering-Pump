@@ -114,6 +114,8 @@ th {
   display: flex; 
   justify-content: space-around; 
   align-items: center; 
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .stat { 
@@ -398,8 +400,17 @@ input[type="range"]::-moz-range-thumb {
 
 .btn-edit { 
   background: #757575; 
+  font-size: 0;
+  position: relative;
+}
+
+.btn-edit::before {
+  content: "✏";
   font-size: 16px;
+  line-height: 1;
+  display: inline-block;
   transform: rotate(-45deg);
+  color: white;
 }
 
 .btn-run {

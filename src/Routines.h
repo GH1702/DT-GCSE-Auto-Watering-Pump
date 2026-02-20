@@ -218,6 +218,12 @@ public:
 
 class RoutineExecutor {
 public:
+  RoutineExecutor() {
+    for (int i = 0; i < MAX_ROUTINES; i++) {
+      smartActive[i] = false;
+      smartIds[i] = 0;
+    }
+  }
   
   // Check if it's time to run any routines
   // Returns: pump index (0-3) to activate, or -1 if none
@@ -257,6 +263,7 @@ public:
             // Convert ml to seconds (rough estimate: 100ml = 10s)
             duration = amount / 10;
             if (duration < 1) duration = 1;
+            if (duration > 10) duration = 10; // Respect watchdog window
             
             Serial.printf("ROUTINE TRIGGERED: %s at %02d:%02d\n", 
                          routine["name"].as<const char*>(), hour, minute);
@@ -265,22 +272,35 @@ public:
         }
       }
       else if (mode == "smart") {
-        // Moisture-based routine
+        // Moisture-based routine with hysteresis:
+        // start when moisture drops below 10% of trigger, then keep running
+        // in watchdog-sized pulses until moisture reaches the trigger.
+        long routineId = routine["id"] | 0;
         int sensor = routine["s"] | 0;
         int threshold = routine["val"] | 30;
         int pump = routine["p"] | 0;
         
         if (sensor >= 1 && sensor <= 4) {
           int moisture = moistureLevels[sensor - 1];
-          
-          if (moisture < threshold) {
-            // Check time window
-            bool inWindow = checkTimeWindow(routine, currentHour, currentMinute);
-            
-            if (inWindow) {
-              duration = 10; // Default smart watering duration
-              Serial.printf("SMART ROUTINE TRIGGERED: %s (M%d: %d%% < %d%%)\n",
-                           routine["name"].as<const char*>(), sensor, moisture, threshold);
+          bool inWindow = checkTimeWindow(routine, currentHour, currentMinute);
+          if (!inWindow) continue;
+
+          int startThreshold = max(1, threshold / 10); // 10% of trigger%
+          int slot = getRoutineSlot(routineId);
+          bool isActive = (slot >= 0) ? smartActive[slot] : false;
+
+          if (!isActive && moisture <= startThreshold) {
+            if (slot >= 0) smartActive[slot] = true;
+            isActive = true;
+          }
+
+          if (isActive) {
+            if (moisture >= threshold) {
+              if (slot >= 0) smartActive[slot] = false;
+            } else {
+              duration = 10; // Keep each run within watchdog window
+              Serial.printf("SMART ROUTINE RUN: %s (M%d: %d%%, start<=%d%%, target=%d%%)\n",
+                           routine["name"].as<const char*>(), sensor, moisture, startThreshold, threshold);
               return pump - 1;
             }
           }
@@ -292,6 +312,23 @@ public:
   }
 
 private:
+  bool smartActive[MAX_ROUTINES];
+  long smartIds[MAX_ROUTINES];
+
+  int getRoutineSlot(long routineId) {
+    for (int i = 0; i < MAX_ROUTINES; i++) {
+      if (smartIds[i] == routineId) return i;
+    }
+    for (int i = 0; i < MAX_ROUTINES; i++) {
+      if (smartIds[i] == 0) {
+        smartIds[i] = routineId;
+        smartActive[i] = false;
+        return i;
+      }
+    }
+    return -1;
+  }
+
   bool checkTimeWindow(JsonObject routine, int hour, int minute) {
     bool inverted = routine["inv"] | false;
     int minSlot = routine["min"] | 16;  // 08:00

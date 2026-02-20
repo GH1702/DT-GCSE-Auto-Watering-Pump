@@ -9,6 +9,7 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include "index_html.h"
 #include "style_css.h"
 #include "script_js.h"
@@ -111,6 +112,7 @@ long waterLevelCM = -1;
 
 int pumpTimeoutS = 10;
 bool manualOverride = false;
+unsigned long lastWhatsAppSentMs = 0;
 
 // ============================================================
 // =================== FORWARD DECLARATIONS ===================
@@ -132,6 +134,7 @@ void drawLedBreathing();
 void drawLedRainbow();
 uint32_t parseHexColor(String hex);
 String colorToHex(uint32_t color);
+String urlEncode(const String& src);
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -277,6 +280,28 @@ uint32_t lerpColor(uint32_t a, uint32_t b, float t) {
   uint8_t rg = (uint8_t)(ag + (bg - ag) * t);
   uint8_t rb = (uint8_t)(ab + (bb - ab) * t);
   return ring.Color(rr, rg, rb);
+}
+
+String urlEncode(const String& src) {
+  const char* hex = "0123456789ABCDEF";
+  String out;
+  out.reserve(src.length() * 3);
+  for (size_t i = 0; i < src.length(); i++) {
+    unsigned char c = (unsigned char)src.charAt(i);
+    if ((c >= 'a' && c <= 'z') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.' || c == '~') {
+      out += (char)c;
+    } else if (c == ' ') {
+      out += '+';
+    } else {
+      out += '%';
+      out += hex[(c >> 4) & 0x0F];
+      out += hex[c & 0x0F];
+    }
+  }
+  return out;
 }
 
 
@@ -747,15 +772,12 @@ void drawLedMoving() {
 }
 
 void drawLedSmartLevel() {
-  int litPixels = map(constrain(waterLevelPercent, 0, 100), 0, 100, 0, NUM_LEDS);
+  int pct = constrain(waterLevelPercent, 0, 100);
+  int band = pct / 20;
+  if (band > 4) band = 4;
+  uint32_t bandColor = smartBandColors[band];
   for (int i = 0; i < NUM_LEDS; i++) {
-    if (i < litPixels) {
-      int band = (i * 5) / NUM_LEDS;
-      if (band > 4) band = 4;
-      ring.setPixelColor(i, smartBandColors[band]);
-    } else {
-      ring.setPixelColor(i, ring.Color(0, 0, 0));
-    }
+    ring.setPixelColor(i, bandColor);
   }
   ring.show();
 }
@@ -829,6 +851,10 @@ void sendWhatsAppMessage(String message) {
     Serial.println("WiFi not connected - cannot send WhatsApp");
     return;
   }
+  if (millis() - lastWhatsAppSentMs < 30000UL) {
+    Serial.println("WhatsApp throttled (30s cooldown)");
+    return;
+  }
   
   message.replace("{tank}", String(waterLevelPercent) + "%");
   for (int i = 0; i < 4; i++) {
@@ -837,49 +863,27 @@ void sendWhatsAppMessage(String message) {
     message.replace("{pump}", String(i + 1));
   }
   
-  String encodedMsg = "";
-  for (unsigned int i = 0; i < message.length(); i++) {
-    char c = message.charAt(i);
-    if (c == ' ') encodedMsg += '+';
-    else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') encodedMsg += c;
-    else {
-      encodedMsg += '%';
-      if (c < 16) encodedMsg += '0';
-      encodedMsg += String(c, HEX);
-    }
-  }
-  
-  String url = "http://api.callmebot.com/whatsapp.php?";
-  url += "phone=+447902664891";
-  url += "&text=" + encodedMsg;
-  url += "&apikey=4458318";
-  
+  String url = "http://api.callmebot.com/whatsapp.php?phone=%2B447902664891&text=" + urlEncode(message) + "&apikey=4458318";
   Serial.println("Sending WhatsApp: " + message);
-  
-  WiFiClient client;
-  if (client.connect("api.callmebot.com", 80)) {
-    client.print(String("GET ") + url.substring(30) + " HTTP/1.1\r\n" +
-                 "Host: api.callmebot.com\r\n" +
-                 "Connection: close\r\n\r\n");
-    
-    unsigned long timeout = millis();
-    while (client.available() == 0) {
-      if (millis() - timeout > 5000) {
-        Serial.println("WhatsApp request timeout");
-        client.stop();
-        return;
-      }
-    }
-    
-    while (client.available()) {
-      String line = client.readStringUntil('\r');
-      Serial.print(line);
-    }
-    
-    client.stop();
-    Serial.println("\nWhatsApp message sent successfully");
+
+  HTTPClient http;
+  http.setTimeout(10000);
+  if (!http.begin(url)) {
+    Serial.println("WhatsApp request init failed");
+    return;
+  }
+
+  int code = http.GET();
+  String body = http.getString();
+  Serial.printf("WhatsApp HTTP %d\n", code);
+  Serial.println(body);
+  http.end();
+
+  if (code >= 200 && code < 300) {
+    lastWhatsAppSentMs = millis();
+    Serial.println("WhatsApp message sent successfully");
   } else {
-    Serial.println("Failed to connect to callmebot API");
+    Serial.println("WhatsApp API error");
   }
 }
 
@@ -927,11 +931,17 @@ void handleStatus() {
   
   float tempC = readTemperatureC();   // read temperature
   long waterRaw = readWaterDistanceCM();
+  DateTime nowRTC = rtc.now();
+  const char* dayNames[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  char rtcTimeBuf[6];
+  sprintf(rtcTimeBuf, "%02d:%02d", nowRTC.hour(), nowRTC.minute());
 
   String json = "{";
   json += "\"water\":" + String(waterLevelPercent) + ",";
   json += "\"waterRaw\":" + String(waterRaw) + ",";
   json += "\"lidOff\":" + String((digitalRead(LID_PIN) == HIGH) ? "true" : "false") + ",";
+  json += "\"rtcTime\":\"" + String(rtcTimeBuf) + "\",";
+  json += "\"rtcDay\":\"" + String(dayNames[nowRTC.dayOfTheWeek() % 7]) + "\",";
   json += "\"temperature\":" + String(tempC, 1) + ",";  // 1 decimal place
   json += "\"m\":[" + String(moisturePercent[0]) + "," + String(moisturePercent[1]) + "," 
                     + String(moisturePercent[2]) + "," + String(moisturePercent[3]) + "],";
@@ -1344,28 +1354,24 @@ void loop()
   }
 
   // --- Routine checking ---
-  if (bootMode == MODE_MQTT)
+  DateTime nowRTC = rtc.now();
+  int currentHour = nowRTC.hour();
+  int currentMinute = nowRTC.minute();
+  int currentDay = (nowRTC.dayOfTheWeek() + 6) % 7; // Convert Sun=0..Sat=6 to Mon=0..Sun=6
+
+  if (currentMinute != lastMinute)
   {
-    // REPLACE timeClient calls with rtc.now()
-    DateTime nowRTC = rtc.now();
-    int currentHour = nowRTC.hour();
-    int currentMinute = nowRTC.minute();
-    int currentDay = nowRTC.dayOfTheWeek(); // NTPClient uses 0-6, RTClib also uses 0-6 (Sun-Sat)
+    lastMinute = currentMinute;
+    String routines = storage.loadRoutines();
+    int duration = 0;
+    int pumpToRun = routineExec.checkRoutines(
+        routines, currentDay, currentHour, currentMinute,
+        moisturePercent, duration);
 
-    if (currentMinute != lastMinute)
+    if (pumpToRun >= 0 && pumpToRun < 4)
     {
-      lastMinute = currentMinute;
-      String routines = storage.loadRoutines();
-      int duration = 0;
-      int pumpToRun = routineExec.checkRoutines(
-          routines, currentDay, currentHour, currentMinute,
-          moisturePercent, duration);
-
-      if (pumpToRun >= 0 && pumpToRun < 4)
-      {
-        Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
-        activatePump(pumpToRun, duration);
-      }
+      Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
+      activatePump(pumpToRun, duration);
     }
   }
 
@@ -1374,8 +1380,9 @@ void loop()
   {
     lastAutomationCheck = now;
     String automations = storage.loadAutomations();
-    int hour = bootMode == MODE_MQTT ? timeClient.getHours() : 12;
-    int minute = bootMode == MODE_MQTT ? timeClient.getMinutes() : 0;
+    DateTime autoNow = rtc.now();
+    int hour = autoNow.hour();
+    int minute = autoNow.minute();
 
     automationExec.checkAutomations(
         automations, moisturePercent, waterLevelPercent,

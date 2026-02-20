@@ -687,6 +687,20 @@ function saveLedConfig() {
   .catch(e => console.error('LED save failed:', e));
 }
 
+function setLedModeQuick(mode) {
+  fetch('/led/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: mode})
+  })
+  .then(r => r.text())
+  .then(() => {
+    loadLedStatus();
+    showSaveToast('LED mode updated');
+  })
+  .catch(e => console.error('LED quick mode failed:', e));
+}
+
 function showSaveToast(message) {
   const toast = document.getElementById('save-toast');
   toast.innerText = message || 'Settings Stored';
@@ -703,6 +717,8 @@ function updateStatus() {
       } else {
         document.getElementById("waterLvl").innerText = data.water + "%";
       }
+      if (data.rtcTime) document.getElementById("dashTime").innerText = data.rtcTime;
+      if (data.rtcDay) document.getElementById("dashDay").innerText = data.rtcDay;
       for(let i=1; i<=4; i++) {
         if (data.raw[i-1] < 900) {
           document.getElementById("m" + i).innerText = "Disconected";

@@ -60,6 +60,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <div><span id="status-dot"></span><span id="conn-status">Searching...</span></div>
       <div>Tank: <span id="waterLvl" class="stat">--</span></div>
       <div>Temp: <span id="temp" class="stat">--</span>°C</div>
+      <div>Time: <span id="dashTime" class="stat">--:--</span> <span id="dashDay">---</span></div>
       <div class="updated-text">Synced: <span id="last-upd">Never</span></div>
     </div>
     
@@ -99,6 +100,13 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <div id="routine-list">
         <p id="empty-msg" style="text-align:center; color:#888;">No routines created yet.</p>
       </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;">LED Quick Actions</h3>
+      <button class="save-btn" onclick="setLedModeQuick('off')">Off</button>
+      <button class="save-btn" onclick="setLedModeQuick('normal')">Normal</button>
+      <button class="save-btn" onclick="setLedModeQuick('smart')">Smart</button>
+      <button class="save-btn" onclick="setLedModeQuick('rgb')">RGB</button>
     </div>
   </div>
 
