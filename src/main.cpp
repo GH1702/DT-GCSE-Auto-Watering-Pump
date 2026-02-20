@@ -746,12 +746,17 @@ void drawOLED() {
   int16_t x1, y1;
   uint16_t w, h;
 
+  
   // ---------- TOP ROW (Water | Time | Temp) ----------
   // Water (Left)
   display.setCursor(0, 0);
-  display.print("W:");
-  display.print(waterLevelPercent);
-  display.print("%");
+  if (digitalRead(LID_PIN) == HIGH) {
+    display.print("W:  X"); // Spaced exactly like the "M:  X" text
+  } else {
+    display.print("W:");
+    display.print(waterLevelPercent);
+    display.print("%");
+  }
 
   // Time (Centered)
   DateTime rtcNow = rtc.now();
@@ -773,7 +778,7 @@ void drawOLED() {
   for (int i = 0; i < 4; i++) {
     int y = 16 + i * 12;
     display.setCursor(0, y);
-    if (rawMoistureValues[i] < 500) {
+    if (rawMoistureValues[i] < 900) {
       display.printf("P%d: %-3s M%d:  X",
                      i + 1,
                      pumpActive[i] ? "ON" : "OFF",
