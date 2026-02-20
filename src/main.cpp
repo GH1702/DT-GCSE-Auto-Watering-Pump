@@ -1086,7 +1086,7 @@ void drawOLED() {
   char timeBuffer[6];
   sprintf(timeBuffer, "%02d:%02d", rtcNow.hour(), rtcNow.minute());
   display.getTextBounds(timeBuffer, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((SCREEN_WIDTH / 2) - (w / 2), 0);
+  display.setCursor(((SCREEN_WIDTH / 2) - (w / 2)+5), 0);
   display.print(timeBuffer);
 
   // Temp (Right)
