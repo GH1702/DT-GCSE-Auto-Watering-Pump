@@ -113,6 +113,7 @@ long waterLevelCM = -1;
 int pumpTimeoutS = 10;
 bool manualOverride = false;
 unsigned long lastWhatsAppSentMs = 0;
+unsigned long lidOffStartMs = 0;
 
 // ============================================================
 // =================== FORWARD DECLARATIONS ===================
@@ -120,6 +121,7 @@ unsigned long lastWhatsAppSentMs = 0;
 void sendWhatsAppMessage(String message);
 void pumpActionCallback(int pump, int duration);
 void whatsappActionCallback(String message);
+void ledModeActionCallback(String mode);
 void activatePump(int idx, int seconds);  // NO DEFAULT HERE
 void stopPump(int idx);
 void handleLedStatus();
@@ -443,6 +445,10 @@ void handleRunAutomation() {
         else if (type == "pump_off") {
           int pump = doAction["pump"] | 1;
           stopPump(pump - 1);
+        }
+        else if (type == "led_mode") {
+          String ledMode = doAction["ledMode"] | "normal";
+          ledModeActionCallback(ledMode);
         }
         
         server.send(200, "text/plain", "Automation executed");
@@ -899,6 +905,11 @@ void whatsappActionCallback(String message) {
   sendWhatsAppMessage(message);
 }
 
+void ledModeActionCallback(String mode) {
+  setLedModeFromString(mode);
+  saveLedSettings();
+}
+
 // ============================================================
 // ====================== WEB HANDLERS ========================
 // ============================================================
@@ -1063,7 +1074,7 @@ void drawOLED() {
   // Water (Left)
   display.setCursor(0, 0);
   if (digitalRead(LID_PIN) == HIGH) {
-    display.print("Tank:LID OFF");
+    display.print("Tank: X");
   } else {
     display.print("Tank:");
     display.print(waterLevelPercent);
@@ -1091,7 +1102,7 @@ void drawOLED() {
     int y = 16 + i * 12;
     display.setCursor(0, y);
     if (rawMoistureValues[i] < 900) {
-      display.printf("P%d:%-3s M%d:Disconected",
+      display.printf("P%d:%-3s M%d: X",
                      i + 1,
                      pumpActive[i] ? "ON" : "OFF",
                      i + 1);
@@ -1211,6 +1222,9 @@ void setup() {
       bootSwirl(sf++);
       delay(50);
     }
+    if (WiFi.status() == WL_CONNECTED) {
+      timeClient.begin();
+    }
   }
   bootSwirl(sf++);
 
@@ -1258,7 +1272,6 @@ void setup() {
   } else if (bootMode == MODE_MQTT) {
     mqtt.setServer(mqtt_server, 1883);
     mqtt.setCallback(mqttCallback);
-    timeClient.begin();
   }
   bootSwirl(sf++);
 
@@ -1303,6 +1316,13 @@ void loop()
 
   // --- LID STATUS ---
   bool lidOff = (digitalRead(LID_PIN) == HIGH);
+  int lidOffMinutes = 0;
+  if (lidOff) {
+    if (lidOffStartMs == 0) lidOffStartMs = now;
+    lidOffMinutes = (int)((now - lidOffStartMs) / 60000UL);
+  } else {
+    lidOffStartMs = 0;
+  }
 
   // --- Water level (PAUSED if lid is off) ---
   if (!lidOff && (now - lastWaterRead > 3000))
@@ -1386,8 +1406,8 @@ void loop()
 
     automationExec.checkAutomations(
         automations, moisturePercent, waterLevelPercent,
-        pumpActive, hour, minute,
-        pumpActionCallback, whatsappActionCallback);
+        pumpActive, lidOff, lidOffMinutes, hour, minute,
+        pumpActionCallback, whatsappActionCallback, ledModeActionCallback);
   }
 
   // --- OLED refresh ---

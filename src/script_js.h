@@ -279,7 +279,7 @@ function renderRoutines() {
 }
 
 function runRoutine(id) {
-  fetch('/routine/run?id=' + id, {method: 'POST'})
+  fetch('/routine/run?id=' + id)
     .then(r => r.text())
     .then(msg => alert('Routine executed!'))
     .catch(e => console.error('Run failed:', e));
@@ -313,6 +313,7 @@ function resetForm() {
 }
 
 let notifications = [];
+let notifEditId = null;
 
 function loadAutomationsFromESP() {
   fetch('/automations')
@@ -338,12 +339,15 @@ function saveAutomationsToESP() {
   .catch(e => console.error('Save failed:', e));
 }
 
-function openNotifModal() {
+function openNotifModal(id = null) {
+  notifEditId = null;
   document.getElementById('notif-name').value = "";
   document.getElementById('notif-when').value = "";
   document.getElementById('notif-if').value = "";
   document.getElementById('notif-do').value = "";
   document.getElementById('notif-message').value = "";
+  document.getElementById('notif-if-lid-mins').value = "10";
+  document.getElementById('notif-led-mode').value = "normal";
   
   document.getElementById('when-options').classList.add('hidden');
   document.getElementById('when-sensor-group').classList.add('hidden');
@@ -353,12 +357,52 @@ function openNotifModal() {
   document.getElementById('if-options').classList.add('hidden');
   document.getElementById('if-sensor-group').classList.add('hidden');
   document.getElementById('if-time-group').classList.add('hidden');
+  document.getElementById('if-lid-group').classList.add('hidden');
   
   document.getElementById('do-options').classList.add('hidden');
   document.getElementById('do-whatsapp-group').classList.add('hidden');
   document.getElementById('do-pump-group').classList.add('hidden');
   document.getElementById('do-pump-duration').classList.add('hidden');
+  document.getElementById('do-led-group').classList.add('hidden');
   
+  document.getElementById('notif-modal-title').innerText = "Create Automation";
+
+  if (id) {
+    const a = notifications.find(x => x.id === id);
+    if (a) {
+      notifEditId = id;
+      document.getElementById('notif-modal-title').innerText = "Edit Automation";
+      document.getElementById('notif-name').value = a.name || "";
+      document.getElementById('notif-when').value = (a.when && a.when.type) ? a.when.type : "";
+      updateWhenOptions();
+      if (a.when) {
+        if (a.when.sensor) document.getElementById('notif-sensor').value = a.when.sensor;
+        if (a.when.threshold) document.getElementById('notif-threshold').value = a.when.threshold;
+        if (a.when.pump) document.getElementById('notif-pump').value = a.when.pump;
+        if (a.when.time) document.getElementById('notif-time').value = a.when.time;
+      }
+
+      document.getElementById('notif-if').value = (a.if && a.if.type) ? a.if.type : "";
+      updateIfOptions();
+      if (a.if) {
+        if (a.if.sensor) document.getElementById('notif-if-sensor').value = a.if.sensor;
+        if (a.if.threshold) document.getElementById('notif-if-threshold').value = a.if.threshold;
+        if (a.if.timeFrom) document.getElementById('notif-if-time-from').value = a.if.timeFrom;
+        if (a.if.timeTo) document.getElementById('notif-if-time-to').value = a.if.timeTo;
+        if (a.if.minutes) document.getElementById('notif-if-lid-mins').value = a.if.minutes;
+      }
+
+      document.getElementById('notif-do').value = (a.do && a.do.type) ? a.do.type : "";
+      updateDoOptions();
+      if (a.do) {
+        if (a.do.message) document.getElementById('notif-message').value = a.do.message;
+        if (a.do.pump) document.getElementById('notif-do-pump').value = a.do.pump;
+        if (a.do.duration) document.getElementById('notif-pump-duration').value = a.do.duration;
+        if (a.do.ledMode) document.getElementById('notif-led-mode').value = a.do.ledMode;
+      }
+    }
+  }
+
   hideNotifErrs();
   document.getElementById('notif-modal-container').classList.remove('hidden');
 }
@@ -400,9 +444,11 @@ function updateIfOptions() {
   const ifOptions = document.getElementById('if-options');
   const sensorGroup = document.getElementById('if-sensor-group');
   const timeGroup = document.getElementById('if-time-group');
+  const lidGroup = document.getElementById('if-lid-group');
   
   sensorGroup.classList.add('hidden');
   timeGroup.classList.add('hidden');
+  lidGroup.classList.add('hidden');
   
   if(ifCond) {
     ifOptions.classList.remove('hidden');
@@ -411,6 +457,8 @@ function updateIfOptions() {
       sensorGroup.classList.remove('hidden');
     } else if(ifCond === 'time_between') {
       timeGroup.classList.remove('hidden');
+    } else if(ifCond === 'lid_off_for') {
+      lidGroup.classList.remove('hidden');
     }
   } else {
     ifOptions.classList.add('hidden');
@@ -423,10 +471,12 @@ function updateDoOptions() {
   const whatsappGroup = document.getElementById('do-whatsapp-group');
   const pumpGroup = document.getElementById('do-pump-group');
   const pumpDuration = document.getElementById('do-pump-duration');
+  const ledGroup = document.getElementById('do-led-group');
   
   whatsappGroup.classList.add('hidden');
   pumpGroup.classList.add('hidden');
   pumpDuration.classList.add('hidden');
+  ledGroup.classList.add('hidden');
   
   if(doAction) {
     doOptions.classList.remove('hidden');
@@ -438,6 +488,8 @@ function updateDoOptions() {
       if(doAction === 'pump_on') {
         pumpDuration.classList.remove('hidden');
       }
+    } else if (doAction === 'led_mode') {
+      ledGroup.classList.remove('hidden');
     }
   } else {
     doOptions.classList.add('hidden');
@@ -483,7 +535,7 @@ function saveNotification() {
   if(!valid) return;
   
   const automation = {
-    id: Date.now(),
+    id: notifEditId || Date.now(),
     name: name,
     when: {
       type: when,
@@ -497,18 +549,25 @@ function saveNotification() {
       sensor: document.getElementById('notif-if-sensor') ? document.getElementById('notif-if-sensor').value : null,
       threshold: document.getElementById('notif-if-threshold') ? document.getElementById('notif-if-threshold').value : null,
       timeFrom: document.getElementById('notif-if-time-from') ? document.getElementById('notif-if-time-from').value : null,
-      timeTo: document.getElementById('notif-if-time-to') ? document.getElementById('notif-if-time-to').value : null
+      timeTo: document.getElementById('notif-if-time-to') ? document.getElementById('notif-if-time-to').value : null,
+      minutes: document.getElementById('notif-if-lid-mins') ? document.getElementById('notif-if-lid-mins').value : null
     } : null,
     do: {
       type: doAction,
       message: document.getElementById('notif-message') ? document.getElementById('notif-message').value : null,
       pump: document.getElementById('notif-do-pump') ? document.getElementById('notif-do-pump').value : null,
-      duration: document.getElementById('notif-pump-duration') ? document.getElementById('notif-pump-duration').value : null
+      duration: document.getElementById('notif-pump-duration') ? document.getElementById('notif-pump-duration').value : null,
+      ledMode: document.getElementById('notif-led-mode') ? document.getElementById('notif-led-mode').value : null
     },
-    created: new Date().toLocaleString()
+    created: notifEditId ? ((notifications.find(n => n.id === notifEditId) || {}).created || new Date().toLocaleString()) : new Date().toLocaleString()
   };
   
-  notifications.unshift(automation);
+  if (notifEditId) {
+    const idx = notifications.findIndex(n => n.id === notifEditId);
+    if (idx >= 0) notifications[idx] = automation;
+  } else {
+    notifications.unshift(automation);
+  }
   saveAutomationsToESP();
   renderNotifications();
   closeNotifModal();
@@ -520,9 +579,11 @@ function getReadableCondition(type, data) {
     'moisture_above': 'Moisture sensor ' + data.sensor + ' rises above ' + data.threshold + '%',
     'water_below': 'Water tank falls below ' + data.threshold + '%',
     'water_above': 'Water tank rises above ' + data.threshold + '%',
+    'lid_off': 'LID is OFF',
     'pump_starts': 'Pump ' + data.pump + ' starts',
     'pump_stops': 'Pump ' + data.pump + ' stops',
     'time': 'At ' + data.time,
+    'lid_off_for': 'LID has been OFF for ' + data.minutes + ' mins',
     'time_between': 'Time is between ' + data.timeFrom + ' and ' + data.timeTo
   };
   return conditions[type] || type;
@@ -532,7 +593,8 @@ function getReadableAction(type, data) {
   const actions = {
     'whatsapp': 'Send WhatsApp: "' + data.message + '"',
     'pump_on': 'Turn pump ' + data.pump + ' ON for ' + data.duration + 's',
-    'pump_off': 'Turn pump ' + data.pump + ' OFF'
+    'pump_off': 'Turn pump ' + data.pump + ' OFF',
+    'led_mode': 'Set LED mode to ' + data.ledMode
   };
   return actions[type] || type;
 }
@@ -567,14 +629,14 @@ function renderNotifications() {
 }
 
 function runAutomation(id) {
-  fetch('/automation/run?id=' + id, {method: 'POST'})
+  fetch('/automation/run?id=' + id)
     .then(r => r.text())
     .then(msg => alert('Automation executed!'))
     .catch(e => console.error('Run failed:', e));
 }
 
 function editAutomation(id) {
-  alert('Edit automation functionality coming soon!');
+  openNotifModal(id);
 }
 
 function deleteNotification(id) {

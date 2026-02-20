@@ -352,9 +352,11 @@ public:
   
   // Check all automations and execute actions if triggered
   void checkAutomations(String automationsJSON, int* moistureLevels, int waterLevel,
-                       bool* pumpStates, int currentHour, int currentMinute,
+                       bool* pumpStates, bool lidOff, int lidOffMinutes,
+                       int currentHour, int currentMinute,
                        void (*pumpCallback)(int, int), 
-                       void (*whatsappCallback)(String)) {
+                       void (*whatsappCallback)(String),
+                       void (*ledModeCallback)(String)) {
     
     StaticJsonDocument<4096> doc;
     DeserializationError error = deserializeJson(doc, automationsJSON);
@@ -369,26 +371,26 @@ public:
     for (JsonObject auto_obj : automations) {
       // Check WHEN condition
       bool whenTriggered = checkWhenCondition(auto_obj["when"], 
-                                               moistureLevels, waterLevel, pumpStates);
+                                               moistureLevels, waterLevel, pumpStates, lidOff);
       
       if (!whenTriggered) continue;
       
       // Check IF condition (optional)
       if (auto_obj.containsKey("if") && !auto_obj["if"].isNull()) {
         bool ifCondition = checkIfCondition(auto_obj["if"], 
-                                            moistureLevels, waterLevel, 
+                                            moistureLevels, waterLevel, lidOff, lidOffMinutes,
                                             currentHour, currentMinute);
         if (!ifCondition) continue;
       }
       
       // Execute DO action
       executeAction(auto_obj["do"], auto_obj["name"], 
-                   pumpCallback, whatsappCallback);
+                   pumpCallback, whatsappCallback, ledModeCallback);
     }
   }
 
 private:
-  bool checkWhenCondition(JsonObject when, int* moisture, int water, bool* pumps) {
+  bool checkWhenCondition(JsonObject when, int* moisture, int water, bool* pumps, bool lidOff) {
     String type = when["type"] | "";
     
     if (type == "moisture_below") {
@@ -417,11 +419,14 @@ private:
       int pump = when["pump"] | 1;
       return !pumps[pump - 1];
     }
+    else if (type == "lid_off") {
+      return lidOff;
+    }
     
     return false;
   }
 
-  bool checkIfCondition(JsonObject ifCond, int* moisture, int water, int hour, int minute) {
+  bool checkIfCondition(JsonObject ifCond, int* moisture, int water, bool lidOff, int lidOffMinutes, int hour, int minute) {
     String type = ifCond["type"] | "";
     
     if (type == "moisture_below") {
@@ -457,13 +462,18 @@ private:
       
       return (currentMinutes >= fromMinutes && currentMinutes <= toMinutes);
     }
+    else if (type == "lid_off_for") {
+      int mins = ifCond["minutes"] | 10;
+      return lidOff && lidOffMinutes >= mins;
+    }
     
     return true; // No condition = always pass
   }
 
   void executeAction(JsonObject doAction, String autoName,
                     void (*pumpCallback)(int, int),
-                    void (*whatsappCallback)(String)) {
+                    void (*whatsappCallback)(String),
+                    void (*ledModeCallback)(String)) {
     String type = doAction["type"] | "";
     
     if (type == "whatsapp") {
@@ -481,6 +491,11 @@ private:
       int pump = doAction["pump"] | 1;
       Serial.printf("AUTOMATION: %s -> Pump %d OFF\n", autoName.c_str(), pump);
       if (pumpCallback) pumpCallback(pump - 1, 0); // 0 = stop
+    }
+    else if (type == "led_mode") {
+      String ledMode = doAction["ledMode"] | "normal";
+      Serial.printf("AUTOMATION: %s -> LED mode %s\n", autoName.c_str(), ledMode.c_str());
+      if (ledModeCallback) ledModeCallback(ledMode);
     }
   }
 };

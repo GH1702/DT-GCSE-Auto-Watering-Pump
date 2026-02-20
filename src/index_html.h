@@ -89,6 +89,14 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         </tr>
       </table>
     </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">LED Quick Actions</h3>
+      <button class="save-btn" onclick="setLedModeQuick('off')">Off</button>
+      <button class="save-btn" onclick="setLedModeQuick('normal')">Normal</button>
+      <button class="save-btn" onclick="setLedModeQuick('smart')">Smart</button>
+      <button class="save-btn" onclick="setLedModeQuick('rgb')">RGB</button>
+    </div>
   </div>
 
   <div id="routine-view" class="hidden">
@@ -100,13 +108,6 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <div id="routine-list">
         <p id="empty-msg" style="text-align:center; color:#888;">No routines created yet.</p>
       </div>
-    </div>
-    <div class="card">
-      <h3 style="margin-top:0;">LED Quick Actions</h3>
-      <button class="save-btn" onclick="setLedModeQuick('off')">Off</button>
-      <button class="save-btn" onclick="setLedModeQuick('normal')">Normal</button>
-      <button class="save-btn" onclick="setLedModeQuick('smart')">Smart</button>
-      <button class="save-btn" onclick="setLedModeQuick('rgb')">RGB</button>
     </div>
   </div>
 
@@ -320,6 +321,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <option value="moisture_above">Moisture rises above</option>
       <option value="water_below">Water tank falls below</option>
       <option value="water_above">Water tank rises above</option>
+      <option value="lid_off">LID is OFF</option>
       <option value="pump_starts">Pump starts</option>
       <option value="pump_stops">Pump stops</option>
       <option value="time">At specific time</option>
@@ -362,6 +364,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <option value="moisture_above">Moisture is above</option>
       <option value="water_below">Water tank is below</option>
       <option value="water_above">Water tank is above</option>
+      <option value="lid_off_for">LID OFF for X mins</option>
       <option value="time_between">Time is between</option>
     </select>
     
@@ -384,6 +387,10 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <label class="matrix-title">To</label>
         <input type="time" id="notif-if-time-to" class="dropdown-select" value="20:00">
       </div>
+      <div id="if-lid-group" class="hidden condition-group">
+        <label class="matrix-title">Minutes</label>
+        <input type="number" id="notif-if-lid-mins" min="1" value="10" class="dropdown-select">
+      </div>
     </div>
     
     <label class="matrix-title">Do (Action)</label>
@@ -392,6 +399,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <option value="whatsapp">Send WhatsApp message</option>
       <option value="pump_on">Turn pump on</option>
       <option value="pump_off">Turn pump off</option>
+      <option value="led_mode">Set LED mode</option>
     </select>
     <div id="err-notif-do" class="error-msg">Select an action</div>
     
@@ -416,6 +424,18 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
           <label class="matrix-title">Duration (seconds)</label>
           <input type="number" id="notif-pump-duration" min="1" value="10" class="dropdown-select">
         </div>
+      </div>
+      <div id="do-led-group" class="hidden condition-group">
+        <label class="matrix-title">LED Mode</label>
+        <select id="notif-led-mode" class="dropdown-select">
+          <option value="off">Off</option>
+          <option value="normal">Normal</option>
+          <option value="static">Static</option>
+          <option value="moving">Moving</option>
+          <option value="smart">Smart</option>
+          <option value="breathing">Breathing</option>
+          <option value="rgb">RGB Circle</option>
+        </select>
       </div>
     </div>
     

@@ -409,7 +409,7 @@ input[type="range"]::-moz-range-thumb {
   font-size: 16px;
   line-height: 1;
   display: inline-block;
-  transform: rotate(-45deg);
+  transform: rotate(135deg);
   color: white;
 }
 
