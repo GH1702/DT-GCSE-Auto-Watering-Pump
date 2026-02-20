@@ -45,11 +45,20 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // ---------- LED Config----------
 Adafruit_NeoPixel ring(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-enum LedMode { LED_WAVE, LED_SOLID, LED_SMART };
+enum LedMode { LED_OFF, LED_WAVE, LED_STATIC, LED_MOVING, LED_SMART, LED_BREATHING, LED_RAINBOW };
 LedMode currentLedMode = LED_WAVE;   // 🌊 DEFAULT MODE
 float waveOffset = 0.0;
 float waveSpeed = 0.08;
 float waveLength = 20.0;
+float rainbowOffset = 0.0f;
+float movingOffset = 0.0f;
+float movingSpeed = 0.35f;
+float breathingPhase = 0.0f;
+uint32_t staticColor = 0;
+uint32_t breathingColor = 0;
+uint32_t movingColors[5] = {0, 0, 0, 0, 0};
+uint32_t smartBandColors[5] = {0, 0, 0, 0, 0};
+int movingColorCount = 5;
 
 // ---------- Objects ----------
 WiFiUDP ntpUDP;
@@ -109,6 +118,18 @@ void pumpActionCallback(int pump, int duration);
 void whatsappActionCallback(String message);
 void activatePump(int idx, int seconds);  // NO DEFAULT HERE
 void stopPump(int idx);
+void handleLedStatus();
+void handleLedConfig();
+void loadLedSettings();
+void saveLedSettings();
+void drawLedOff();
+void drawLedStatic();
+void drawLedMoving();
+void drawLedSmartLevel();
+void drawLedBreathing();
+void drawLedRainbow();
+uint32_t parseHexColor(String hex);
+String colorToHex(uint32_t color);
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -217,6 +238,43 @@ int getTankPercent() {
 
   percent = constrain(percent, 0, 100);
   return (int)percent;
+}
+
+uint32_t parseHexColor(String hex) {
+  hex.trim();
+  if (hex.length() == 0) return ring.Color(0, 0, 0);
+  if (hex.charAt(0) == '#') hex = hex.substring(1);
+  if (hex.length() != 6) return ring.Color(0, 0, 0);
+
+  long value = strtol(hex.c_str(), nullptr, 16);
+  uint8_t r = (value >> 16) & 0xFF;
+  uint8_t g = (value >> 8) & 0xFF;
+  uint8_t b = value & 0xFF;
+  return ring.Color(r, g, b);
+}
+
+String colorToHex(uint32_t color) {
+  uint8_t r = (color >> 16) & 0xFF;
+  uint8_t g = (color >> 8) & 0xFF;
+  uint8_t b = color & 0xFF;
+  char out[8];
+  sprintf(out, "#%02X%02X%02X", r, g, b);
+  return String(out);
+}
+
+uint32_t lerpColor(uint32_t a, uint32_t b, float t) {
+  t = constrain(t, 0.0f, 1.0f);
+  uint8_t ar = (a >> 16) & 0xFF;
+  uint8_t ag = (a >> 8) & 0xFF;
+  uint8_t ab = a & 0xFF;
+  uint8_t br = (b >> 16) & 0xFF;
+  uint8_t bg = (b >> 8) & 0xFF;
+  uint8_t bb = b & 0xFF;
+
+  uint8_t rr = (uint8_t)(ar + (br - ar) * t);
+  uint8_t rg = (uint8_t)(ag + (bg - ag) * t);
+  uint8_t rb = (uint8_t)(ab + (bb - ab) * t);
+  return ring.Color(rr, rg, rb);
 }
 
 
@@ -380,6 +438,160 @@ void handleStorageInfo() {
   server.send(200, "application/json", json);
 }
 
+String ledModeToString(LedMode mode) {
+  switch (mode) {
+    case LED_OFF: return "off";
+    case LED_WAVE: return "normal";
+    case LED_STATIC: return "static";
+    case LED_MOVING: return "moving";
+    case LED_SMART: return "smart";
+    case LED_BREATHING: return "breathing";
+    case LED_RAINBOW: return "rgb";
+    default: return "normal";
+  }
+}
+
+void loadLedSettings() {
+  preferences.begin("ledcfg", true);
+
+  int savedMode = preferences.getInt("mode", (int)LED_WAVE);
+  if (savedMode < (int)LED_OFF || savedMode > (int)LED_RAINBOW) savedMode = (int)LED_WAVE;
+  currentLedMode = (LedMode)savedMode;
+
+  movingSpeed = preferences.getFloat("speed", movingSpeed);
+  movingSpeed = constrain(movingSpeed, 0.05f, 3.0f);
+
+  staticColor = preferences.getUInt("static", staticColor);
+  breathingColor = preferences.getUInt("breath", breathingColor);
+  movingColorCount = preferences.getInt("mcount", movingColorCount);
+  movingColorCount = constrain(movingColorCount, 2, 5);
+
+  for (int i = 0; i < 5; i++) {
+    String mKey = "m" + String(i);
+    String sKey = "s" + String(i);
+    movingColors[i] = preferences.getUInt(mKey.c_str(), movingColors[i]);
+    smartBandColors[i] = preferences.getUInt(sKey.c_str(), smartBandColors[i]);
+  }
+
+  preferences.end();
+}
+
+void saveLedSettings() {
+  preferences.begin("ledcfg", false);
+  preferences.putInt("mode", (int)currentLedMode);
+  preferences.putFloat("speed", movingSpeed);
+  preferences.putUInt("static", staticColor);
+  preferences.putUInt("breath", breathingColor);
+  preferences.putInt("mcount", movingColorCount);
+
+  for (int i = 0; i < 5; i++) {
+    String mKey = "m" + String(i);
+    String sKey = "s" + String(i);
+    preferences.putUInt(mKey.c_str(), movingColors[i]);
+    preferences.putUInt(sKey.c_str(), smartBandColors[i]);
+  }
+  preferences.end();
+}
+
+void setLedModeFromString(String mode) {
+  mode.toLowerCase();
+  if (mode == "off") currentLedMode = LED_OFF;
+  else if (mode == "normal") currentLedMode = LED_WAVE;
+  else if (mode == "static") currentLedMode = LED_STATIC;
+  else if (mode == "moving") currentLedMode = LED_MOVING;
+  else if (mode == "smart") currentLedMode = LED_SMART;
+  else if (mode == "breathing") currentLedMode = LED_BREATHING;
+  else if (mode == "rgb") currentLedMode = LED_RAINBOW;
+}
+
+void handleLedStatus() {
+  String json = "{";
+  json += "\"mode\":\"" + ledModeToString(currentLedMode) + "\",";
+  json += "\"speed\":" + String(movingSpeed, 2) + ",";
+  json += "\"water\":" + String(waterLevelPercent) + ",";
+  json += "\"static\":\"" + colorToHex(staticColor) + "\",";
+  json += "\"breathing\":\"" + colorToHex(breathingColor) + "\",";
+
+  json += "\"moving\":[";
+  for (int i = 0; i < 5; i++) {
+    json += "\"" + colorToHex(movingColors[i]) + "\"";
+    if (i < 4) json += ",";
+  }
+  json += "],";
+
+  json += "\"smart\":[";
+  for (int i = 0; i < 5; i++) {
+    json += "\"" + colorToHex(smartBandColors[i]) + "\"";
+    if (i < 4) json += ",";
+  }
+  json += "]";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void handleLedConfig() {
+  StaticJsonDocument<2048> doc;
+  bool gotConfig = false;
+
+  if (server.hasArg("plain")) {
+    DeserializationError err = deserializeJson(doc, server.arg("plain"));
+    if (!err) gotConfig = true;
+  }
+
+  if (!gotConfig && server.hasArg("mode")) {
+    setLedModeFromString(server.arg("mode"));
+    gotConfig = true;
+  }
+
+  if (gotConfig && doc.containsKey("mode")) {
+    setLedModeFromString(doc["mode"].as<String>());
+  }
+
+  if (gotConfig && doc.containsKey("speed")) {
+    movingSpeed = constrain(doc["speed"].as<float>(), 0.05f, 3.0f);
+  } else if (!gotConfig && server.hasArg("speed")) {
+    movingSpeed = constrain(server.arg("speed").toFloat(), 0.05f, 3.0f);
+    gotConfig = true;
+  }
+
+  if (gotConfig && doc.containsKey("static")) {
+    staticColor = parseHexColor(doc["static"].as<String>());
+  }
+
+  if (gotConfig && doc.containsKey("breathing")) {
+    breathingColor = parseHexColor(doc["breathing"].as<String>());
+  }
+
+  if (gotConfig && doc.containsKey("moving")) {
+    JsonArray arr = doc["moving"].as<JsonArray>();
+    int idx = 0;
+    for (JsonVariant v : arr) {
+      if (idx >= 5) break;
+      movingColors[idx++] = parseHexColor(v.as<String>());
+    }
+    movingColorCount = max(2, idx);
+  }
+
+  if (gotConfig && doc.containsKey("smart")) {
+    JsonArray arr = doc["smart"].as<JsonArray>();
+    int idx = 0;
+    for (JsonVariant v : arr) {
+      if (idx >= 5) break;
+      smartBandColors[idx++] = parseHexColor(v.as<String>());
+    }
+  }
+
+  if (!gotConfig) {
+    server.send(400, "text/plain", "Invalid LED config");
+    return;
+  }
+
+  saveLedSettings();
+  Serial.printf("LED mode set to: %s\n", ledModeToString(currentLedMode).c_str());
+  server.send(200, "text/plain", "OK");
+}
+
 void loadRoutinesCache() {
     routinesCache = storage.loadRoutines();   // returns a String
 }
@@ -483,6 +695,74 @@ void drawWave()
 
   waveOffset += waveSpeed;
   if (waveOffset >= waveLength) waveOffset -= waveLength;
+}
+
+void drawLedOff() {
+  ring.clear();
+  ring.show();
+}
+
+void drawLedStatic() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    ring.setPixelColor(i, staticColor);
+  }
+  ring.show();
+}
+
+void drawLedMoving() {
+  int count = constrain(movingColorCount, 2, 5);
+  float pixelsPerColor = (float)NUM_LEDS / (float)count;
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    float pos = fmod((float)i + movingOffset, (float)NUM_LEDS);
+    float colorPos = pos / pixelsPerColor;
+    int idxA = (int)floor(colorPos) % count;
+    int idxB = (idxA + 1) % count;
+    float blend = colorPos - floor(colorPos);
+    ring.setPixelColor(i, lerpColor(movingColors[idxA], movingColors[idxB], blend));
+  }
+  ring.show();
+
+  movingOffset += movingSpeed;
+  if (movingOffset >= NUM_LEDS) movingOffset -= NUM_LEDS;
+}
+
+void drawLedSmartLevel() {
+  int litPixels = map(constrain(waterLevelPercent, 0, 100), 0, 100, 0, NUM_LEDS);
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (i < litPixels) {
+      int band = (i * 5) / NUM_LEDS;
+      if (band > 4) band = 4;
+      ring.setPixelColor(i, smartBandColors[band]);
+    } else {
+      ring.setPixelColor(i, ring.Color(0, 0, 0));
+    }
+  }
+  ring.show();
+}
+
+void drawLedBreathing() {
+  float breath = (sin(breathingPhase) * 0.5f) + 0.5f;
+  float brightness = 0.15f + (0.85f * breath);
+  uint8_t r = (uint8_t)(((breathingColor >> 16) & 0xFF) * brightness);
+  uint8_t g = (uint8_t)(((breathingColor >> 8) & 0xFF) * brightness);
+  uint8_t b = (uint8_t)((breathingColor & 0xFF) * brightness);
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    ring.setPixelColor(i, ring.Color(r, g, b));
+  }
+  ring.show();
+  breathingPhase += 0.08f;
+}
+
+void drawLedRainbow() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    uint16_t hue = (uint16_t)((i * 65535UL / NUM_LEDS) + (uint16_t)(rainbowOffset * 256)) & 0xFFFF;
+    ring.setPixelColor(i, ring.gamma32(ring.ColorHSV(hue, 255, 255)));
+  }
+  ring.show();
+  rainbowOffset += 1.0f;
+  if (rainbowOffset >= 255.0f) rainbowOffset = 0.0f;
 }
 
 void drawBreathingRed() {
@@ -827,6 +1107,18 @@ void setup() {
   // --- 1. IMMEDIATE HARDWARE START ---
   ring.begin();
   ring.setBrightness(150);
+  staticColor = ring.Color(0, 160, 255);
+  breathingColor = ring.Color(255, 60, 10);
+  movingColors[0] = ring.Color(255, 0, 0);
+  movingColors[1] = ring.Color(255, 128, 0);
+  movingColors[2] = ring.Color(255, 255, 0);
+  movingColors[3] = ring.Color(0, 180, 255);
+  movingColors[4] = ring.Color(160, 0, 255);
+  smartBandColors[0] = ring.Color(255, 0, 0);
+  smartBandColors[1] = ring.Color(255, 128, 0);
+  smartBandColors[2] = ring.Color(255, 255, 0);
+  smartBandColors[3] = ring.Color(0, 180, 0);
+  smartBandColors[4] = ring.Color(0, 120, 255);
   
   Wire.begin(21, 22);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -947,6 +1239,8 @@ void setup() {
   server.on("/routine/run", handleRunRoutine);
   server.on("/automation/run", handleRunAutomation);
   server.on("/storage/info", handleStorageInfo);
+  server.on("/led/status", handleLedStatus);
+  server.on("/led/config", HTTP_POST, handleLedConfig);
   bootSwirl(sf++);
 
   // 8. SYSTEM READY
@@ -994,9 +1288,13 @@ void loop()
       drawBreathingRed(); // Override with Red Breath
     } else {
       switch (currentLedMode) {
-        case LED_WAVE:  drawWave();  break;
-        case LED_SOLID: /* placeholder */ break;
-        case LED_SMART: /* placeholder */ break;
+        case LED_OFF:       drawLedOff(); break;
+        case LED_WAVE:      drawWave(); break;
+        case LED_STATIC:    drawLedStatic(); break;
+        case LED_MOVING:    drawLedMoving(); break;
+        case LED_SMART:     drawLedSmartLevel(); break;
+        case LED_BREATHING: drawLedBreathing(); break;
+        case LED_RAINBOW:   drawLedRainbow(); break;
       }
     }
   }

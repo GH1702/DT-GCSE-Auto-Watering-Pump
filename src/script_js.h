@@ -8,11 +8,13 @@ function showView(viewId) {
   document.getElementById('routine-view').classList.add('hidden');
   document.getElementById('notif-view').classList.add('hidden');
   document.getElementById('debug-view').classList.add('hidden');
+  document.getElementById('led-view').classList.add('hidden');
   
   document.getElementById('nav-dash').classList.remove('active');
   document.getElementById('nav-rout').classList.remove('active');
   document.getElementById('nav-notif').classList.remove('active');
   document.getElementById('nav-conf').classList.remove('active');
+  document.getElementById('nav-led').classList.remove('active');
   
   document.getElementById(viewId).classList.remove('hidden');
   
@@ -20,6 +22,7 @@ function showView(viewId) {
   if(viewId === 'routine-view') document.getElementById('nav-rout').classList.add('active');
   if(viewId === 'notif-view') document.getElementById('nav-notif').classList.add('active');
   if(viewId === 'debug-view') document.getElementById('nav-conf').classList.add('active');
+  if(viewId === 'led-view') document.getElementById('nav-led').classList.add('active');
 }
 
 function toggleOverride() {
@@ -582,6 +585,94 @@ function deleteNotification(id) {
   }
 }
 
+function getSelectedLedMode() {
+  const selected = document.querySelector('input[name="led-mode"]:checked');
+  return selected ? selected.value : 'normal';
+}
+
+function setSelectedLedMode(mode) {
+  const radio = document.querySelector('input[name="led-mode"][value="' + mode + '"]');
+  if (radio) radio.checked = true;
+  toggleLedControlCards();
+}
+
+function toggleLedControlCards() {
+  const mode = getSelectedLedMode();
+  document.getElementById('led-static-card').classList.toggle('hidden', mode !== 'static');
+  document.getElementById('led-moving-card').classList.toggle('hidden', mode !== 'moving');
+  document.getElementById('led-smart-card').classList.toggle('hidden', mode !== 'smart');
+  document.getElementById('led-breathing-card').classList.toggle('hidden', mode !== 'breathing');
+}
+
+function getColorValues(prefix) {
+  const values = [];
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById(prefix + i);
+    values.push(el ? el.value : '#000000');
+  }
+  return values;
+}
+
+function setColorValues(prefix, values) {
+  if (!Array.isArray(values)) return;
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById(prefix + i);
+    if (el && values[i - 1]) el.value = values[i - 1];
+  }
+}
+
+function updateLedWaterPreview(waterPct) {
+  const pct = Math.max(0, Math.min(100, parseInt(waterPct || 0, 10)));
+  document.getElementById('led-water-pct').innerText = pct;
+  const smartColors = getColorValues('led-smart-');
+  const litBands = Math.ceil(pct / 20);
+  for (let band = 1; band <= 5; band++) {
+    const el = document.getElementById('band-' + band);
+    if (!el) continue;
+    el.style.background = smartColors[band - 1];
+    el.style.opacity = (band <= litBands && pct > 0) ? '1' : '0.15';
+  }
+}
+
+function loadLedStatus() {
+  fetch('/led/status')
+    .then(r => r.json())
+    .then(data => {
+      setSelectedLedMode(data.mode || 'normal');
+      if (data.static) document.getElementById('led-static-color').value = data.static;
+      if (data.breathing) document.getElementById('led-breath-color').value = data.breathing;
+      if (typeof data.speed === 'number') {
+        document.getElementById('led-speed').value = data.speed;
+        document.getElementById('led-speed-label').innerText = Number(data.speed).toFixed(2);
+      }
+      setColorValues('led-moving-', data.moving || []);
+      setColorValues('led-smart-', data.smart || []);
+      updateLedWaterPreview(data.water || 0);
+      toggleLedControlCards();
+    })
+    .catch(e => console.error('LED status failed:', e));
+}
+
+function saveLedConfig() {
+  const payload = {
+    mode: getSelectedLedMode(),
+    speed: parseFloat(document.getElementById('led-speed').value || '0.35'),
+    static: document.getElementById('led-static-color').value,
+    breathing: document.getElementById('led-breath-color').value,
+    moving: getColorValues('led-moving-'),
+    smart: getColorValues('led-smart-')
+  };
+
+  fetch('/led/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  })
+  .then(r => r.text())
+  .then(() => loadLedStatus())
+  .catch(e => console.error('LED save failed:', e));
+}
+
 function updateStatus() {
   fetch('/status')
     .then(r => r.json())
@@ -595,6 +686,7 @@ function updateStatus() {
       if(data.waterRaw) {
         document.getElementById("wRaw").innerText = data.waterRaw;
       }
+      updateLedWaterPreview(data.water);
       document.getElementById("status-dot").style.backgroundColor = "#4CAF50";
       document.getElementById("conn-status").innerText = "Connected";
       document.getElementById("last-upd").innerText = new Date().toLocaleTimeString();
@@ -611,6 +703,21 @@ window.addEventListener("DOMContentLoaded", function() {
   setInterval(updateStatus, 2000);
   loadRoutinesFromESP();
   loadAutomationsFromESP();
+  loadLedStatus();
+
+  document.querySelectorAll('input[name="led-mode"]').forEach(el => {
+    el.addEventListener('change', toggleLedControlCards);
+  });
+
+  document.getElementById('led-speed').addEventListener('input', function() {
+    document.getElementById('led-speed-label').innerText = Number(this.value).toFixed(2);
+  });
+
+  document.querySelectorAll('#led-smart-card input[type="color"]').forEach(el => {
+    el.addEventListener('input', function() {
+      updateLedWaterPreview(document.getElementById('waterLvl').innerText || 0);
+    });
+  });
 });
 
 )rawliteral"; // <--- Added the semicolon here

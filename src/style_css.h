@@ -550,6 +550,87 @@ svg.nav-icon {
 .automation-detail strong {
   color: var(--primary);
 }
+
+.led-mode-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.led-mode-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.led-mode-list input[type="radio"] {
+  transform: scale(1.1);
+}
+
+.led-color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(55px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.led-color-grid label {
+  font-size: 12px;
+  color: #555;
+}
+
+.led-color-grid input[type="color"] {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 2px;
+  background: #fff;
+}
+
+.led-smart-layout {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cylinder-wrap {
+  min-width: 140px;
+}
+
+.cylinder {
+  width: 80px;
+  height: 190px;
+  margin: 0 auto 8px auto;
+  border: 3px solid #555;
+  border-radius: 40px;
+  padding: 6px;
+  box-sizing: border-box;
+  background: #eef3f8;
+  display: flex;
+  flex-direction: column;
+}
+
+.water-band {
+  flex: 1;
+  border-radius: 20px;
+  margin: 2px 0;
+  transition: opacity 0.2s ease;
+}
+
+@media (max-width: 650px) {
+  .led-mode-list {
+    grid-template-columns: 1fr;
+  }
+  .led-color-grid {
+    grid-template-columns: repeat(3, minmax(55px, 1fr));
+  }
+}
 )rawliteral";
 
 #endif

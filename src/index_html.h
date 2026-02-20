@@ -44,6 +44,9 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     <button id="nav-conf" class="nav-btn" onclick="showView('debug-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.5 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg> Config
     </button>
+    <button id="nav-led" class="nav-btn" onclick="showView('led-view')">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M9 21h6v-1H9v1zm3-20C8.69 1 6 3.69 6 7c0 2.38 1.19 4.47 3 5.74V16c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.31-2.69-6-6-6z"/></svg> LED Ring
+    </button>
   </div>
 
   <div id="main-view">
@@ -134,6 +137,74 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <tr><td>M3</td><td><span id="raw3">--</span></td><td><button class="save-btn" onclick="saveCal(3, 'wet', 'M3 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(3, 'dry', 'M3 Dry')">Set</button></td></tr>
         <tr><td>M4</td><td><span id="raw4">--</span></td><td><button class="save-btn" onclick="saveCal(4, 'wet', 'M4 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(4, 'dry', 'M4 Dry')">Set</button></td></tr>
       </table>
+    </div>
+  </div>
+
+  <div id="led-view" class="hidden">
+    <h2>LED Ring Controls</h2>
+    <div class="card">
+      <h3>Effect Mode</h3>
+      <div class="led-mode-list">
+        <label><input type="radio" name="led-mode" value="off"> Off</label>
+        <label><input type="radio" name="led-mode" value="normal"> Normal</label>
+        <label><input type="radio" name="led-mode" value="static"> Static</label>
+        <label><input type="radio" name="led-mode" value="moving"> Moving Palette</label>
+        <label><input type="radio" name="led-mode" value="smart"> Smart Water Level</label>
+        <label><input type="radio" name="led-mode" value="breathing"> Breathing</label>
+        <label><input type="radio" name="led-mode" value="rgb"> RGB Circle</label>
+      </div>
+    </div>
+
+    <div class="card led-controls" id="led-static-card">
+      <h3>Static Color</h3>
+      <input type="color" id="led-static-color" value="#00A0FF">
+    </div>
+
+    <div class="card led-controls hidden" id="led-moving-card">
+      <h3>Moving Palette</h3>
+      <label class="matrix-title">Spin Speed</label>
+      <input type="range" id="led-speed" min="0.05" max="3" step="0.05" value="0.35">
+      <div id="led-speed-label" class="updated-text">0.35</div>
+      <div class="led-color-grid">
+        <input type="color" id="led-moving-1" value="#FF0000">
+        <input type="color" id="led-moving-2" value="#FF8000">
+        <input type="color" id="led-moving-3" value="#FFFF00">
+        <input type="color" id="led-moving-4" value="#00B4FF">
+        <input type="color" id="led-moving-5" value="#A000FF">
+      </div>
+    </div>
+
+    <div class="card led-controls hidden" id="led-smart-card">
+      <h3>Smart Water Level Bands</h3>
+      <div class="led-smart-layout">
+        <div class="cylinder-wrap">
+          <div class="cylinder">
+            <div class="water-band" id="band-5"></div>
+            <div class="water-band" id="band-4"></div>
+            <div class="water-band" id="band-3"></div>
+            <div class="water-band" id="band-2"></div>
+            <div class="water-band" id="band-1"></div>
+          </div>
+          <div class="updated-text">Water: <span id="led-water-pct">--</span>%</div>
+        </div>
+        <div class="led-color-grid">
+          <label>0-20% <input type="color" id="led-smart-1" value="#FF0000"></label>
+          <label>20-40% <input type="color" id="led-smart-2" value="#FF8000"></label>
+          <label>40-60% <input type="color" id="led-smart-3" value="#FFFF00"></label>
+          <label>60-80% <input type="color" id="led-smart-4" value="#00B400"></label>
+          <label>80-100% <input type="color" id="led-smart-5" value="#0078FF"></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card led-controls hidden" id="led-breathing-card">
+      <h3>Breathing Color</h3>
+      <input type="color" id="led-breath-color" value="#FF3C0A">
+    </div>
+
+    <div class="card">
+      <button class="save-btn" onclick="saveLedConfig()">Apply LED Settings</button>
+      <button class="save-btn" onclick="loadLedStatus()" style="margin-left:8px;">Refresh</button>
     </div>
   </div>
 </div>
