@@ -773,11 +773,18 @@ void drawOLED() {
   for (int i = 0; i < 4; i++) {
     int y = 16 + i * 12;
     display.setCursor(0, y);
-    display.printf("P%d: %-3s M%d: %d%%",
-                   i + 1,
-                   pumpActive[i] ? "ON" : "OFF",
-                   i + 1,
-                   moisturePercent[i]);
+    if (rawMoistureValues[i] < 500) {
+      display.printf("P%d: %-3s M%d:  X",
+                     i + 1,
+                     pumpActive[i] ? "ON" : "OFF",
+                     i + 1);
+    } else {
+      display.printf("P%d: %-3s M%d: %d%%",
+                     i + 1,
+                     pumpActive[i] ? "ON" : "OFF",
+                     i + 1,
+                     moisturePercent[i]);
+    }
   }
 
   // ---------- NETWORK STATUS ICON (Bottom Right) ----------
