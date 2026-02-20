@@ -52,7 +52,32 @@ function disableOverride() {
 function startPump(p) {
   let t = document.getElementById("t" + p).value;
   if (!t || t <= 0) t = 10;
-  fetch('/pump?p=' + p + '&t=' + t);
+  const warningEl = document.getElementById('run-warning');
+  warningEl.style.display = 'none';
+
+  let url = '/pump?api=1&p=' + p;
+  if (runInputMode === 'ml') {
+    const ml = parseFloat(t);
+    const rate = pumpMlRates[p - 1] > 0 ? pumpMlRates[p - 1] : 21.5;
+    const estSec = Math.ceil(ml / rate);
+    if (estSec > 10 && !overrideEnabled) {
+      warningEl.innerText = 'Run needs ' + estSec + 's (>10s). Enable Override to execute.';
+      warningEl.style.display = 'block';
+      return;
+    }
+    url += '&ml=' + ml;
+  } else {
+    url += '&t=' + t;
+  }
+
+  fetch(url)
+    .then(r => r.text())
+    .then(msg => {
+      if (msg === 'OVERRIDE_REQUIRED') {
+        warningEl.innerText = 'Override required: this run exceeds 10s watchdog.';
+        warningEl.style.display = 'block';
+      }
+    });
 }
 
 function controlPump(a, p) { 
@@ -73,6 +98,9 @@ let routines = [];
 let mode = 'static';
 let selP = 0, selS = 0, isInverted = false, editId = null;
 const dayNames = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+let runInputMode = 'sec';
+let pumpMlRates = [21.5, 21.5, 21.5, 21.5];
+let overrideEnabled = false;
 
 function loadRoutinesFromESP() {
   fetch('/routines')
@@ -88,13 +116,16 @@ function loadRoutinesFromESP() {
 }
 
 function saveRoutinesToESP() {
-  fetch('/routines', {
+  return fetch('/routines', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(routines)
   })
   .then(r => r.text())
-  .then(() => console.log('Routines saved'))
+  .then(() => {
+    console.log('Routines saved');
+    showSaveToast('Settings Stored');
+  })
   .catch(e => console.error('Save failed:', e));
 }
 
@@ -216,6 +247,7 @@ function saveRoutineBtn() {
   
   const data = {
     id: editId || Date.now(),
+    enabled: editId ? ((routines.find(r => r.id === editId) || {}).enabled !== false) : true,
     name: name.value.trim(),
     mode: mode,
     days: activeDays,
@@ -268,7 +300,8 @@ function renderRoutines() {
       details = r.rangeStr + ' • ' + r.val + '% trigger';
     }
     
-    item.innerHTML = '<div><div><b>' + r.name + '</b> ' + modeTag + pumpTag + sensorTag + 
+    const enabledChecked = (r.enabled === false) ? '' : 'checked';
+    item.innerHTML = '<div><div><input type="checkbox" ' + enabledChecked + ' onchange="toggleRoutineEnabled(' + r.id + ', this.checked)" style="margin-right:8px;"><b>' + r.name + '</b> ' + modeTag + pumpTag + sensorTag + 
       '</div><div class="day-label">' + dayStr + '</div><div style="font-size:0.85em; color:#666; margin-top:2px;">' + 
       details + '</div></div><div style="display:flex; align-items:center;"><button class="action-btn btn-run" onclick="runRoutine(' + 
       r.id + ')" title="Run now"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button><button class="action-btn btn-edit" onclick="openModal(' + 
@@ -283,6 +316,14 @@ function runRoutine(id) {
     .then(r => r.text())
     .then(msg => alert('Routine executed!'))
     .catch(e => console.error('Run failed:', e));
+}
+
+function toggleRoutineEnabled(id, enabled) {
+  const idx = routines.findIndex(r => r.id === id);
+  if (idx >= 0) {
+    routines[idx].enabled = enabled;
+    saveRoutinesToESP();
+  }
 }
 
 function deleteRoutine(id) {
@@ -329,13 +370,16 @@ function loadAutomationsFromESP() {
 }
 
 function saveAutomationsToESP() {
-  fetch('/automations', {
+  return fetch('/automations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(notifications)
   })
   .then(r => r.text())
-  .then(() => console.log('Automations saved'))
+  .then(() => {
+    console.log('Automations saved');
+    showSaveToast('Settings Stored');
+  })
   .catch(e => console.error('Save failed:', e));
 }
 
@@ -536,6 +580,7 @@ function saveNotification() {
   
   const automation = {
     id: notifEditId || Date.now(),
+    enabled: notifEditId ? ((notifications.find(n => n.id === notifEditId) || {}).enabled !== false) : true,
     name: name,
     when: {
       type: when,
@@ -617,7 +662,8 @@ function renderNotifications() {
       ifCondition = '<div class="automation-detail"><strong>If:</strong> ' + getReadableCondition(n.if.type, n.if) + '</div>';
     }
     
-    item.innerHTML = '<div class="notif-content"><h4>' + n.name + '</h4><div class="automation-detail"><strong>When:</strong> ' + 
+    const enabledChecked = (n.enabled === false) ? '' : 'checked';
+    item.innerHTML = '<div class="notif-content"><h4><input type="checkbox" ' + enabledChecked + ' onchange="toggleAutomationEnabled(' + n.id + ', this.checked)" style="margin-right:8px;">' + n.name + '</h4><div class="automation-detail"><strong>When:</strong> ' + 
       getReadableCondition(n.when.type, n.when) + '</div>' + ifCondition + '<div class="automation-detail"><strong>Do:</strong> ' + 
       getReadableAction(n.do.type, n.do) + '</div><div class="notif-timestamp">Created: ' + n.created + 
       '</div></div><div style="display:flex; align-items:center;"><button class="action-btn btn-run" onclick="runAutomation(' + n.id + 
@@ -633,6 +679,14 @@ function runAutomation(id) {
     .then(r => r.text())
     .then(msg => alert('Automation executed!'))
     .catch(e => console.error('Run failed:', e));
+}
+
+function toggleAutomationEnabled(id, enabled) {
+  const idx = notifications.findIndex(n => n.id === id);
+  if (idx >= 0) {
+    notifications[idx].enabled = enabled;
+    saveAutomationsToESP();
+  }
 }
 
 function editAutomation(id) {
@@ -770,6 +824,33 @@ function showSaveToast(message) {
   setTimeout(() => toast.classList.remove('show'), 1600);
 }
 
+function setRunInputMode(mode) {
+  runInputMode = mode;
+  const header = document.getElementById('run-mode-header');
+  const inputs = [1,2,3,4].map(i => document.getElementById('t' + i));
+  if (mode === 'ml') {
+    header.innerText = 'ML Dispensed';
+    inputs.forEach(i => { i.value = 215; i.min = 1; i.step = 1; });
+  } else {
+    header.innerText = 'Timed Run (s)';
+    inputs.forEach(i => { i.value = 10; i.min = 1; i.step = 1; });
+  }
+}
+
+function runPumpCalibration(pump) {
+  fetch('/pump?api=1&p=' + pump + '&t=10');
+}
+
+function savePumpCalibration(pump) {
+  const ml = parseFloat(document.getElementById('pumpMl' + pump).value || '0');
+  if (ml <= 0) return;
+  fetch('/calibrate?type=pumpMl&sensor=' + pump + '&ml=' + ml + '&sec=10')
+    .then(() => {
+      showSaveToast('Settings Stored');
+      updateStatus();
+    });
+}
+
 function updateStatus() {
   fetch('/status')
     .then(r => r.json())
@@ -781,6 +862,10 @@ function updateStatus() {
       }
       if (data.rtcTime) document.getElementById("dashTime").innerText = data.rtcTime;
       if (data.rtcDay) document.getElementById("dashDay").innerText = data.rtcDay;
+      overrideEnabled = !!data.override;
+      if (Array.isArray(data.pumpMl) && data.pumpMl.length === 4) {
+        pumpMlRates = data.pumpMl.map(v => Number(v) || 21.5);
+      }
       for(let i=1; i<=4; i++) {
         if (data.raw[i-1] < 900) {
           document.getElementById("m" + i).innerText = "Disconected";
@@ -789,6 +874,8 @@ function updateStatus() {
         }
         document.getElementById("raw" + i).innerText = data.raw[i-1];
         document.getElementById("pumpDot" + i).classList.toggle("on", !!data.pumps[i-1]);
+        const calEl = document.getElementById('pumpMl' + i);
+        if (calEl && pumpMlRates[i-1]) calEl.value = (pumpMlRates[i-1] * 10).toFixed(1);
         document.getElementById('temp').innerText = data.temperature;
       }
       if(data.waterRaw) {
@@ -807,6 +894,7 @@ function updateStatus() {
 
 window.addEventListener("DOMContentLoaded", function() {
   updateSliders();
+  setRunInputMode('sec');
   updateStatus();
   setInterval(updateStatus, 2000);
   loadRoutinesFromESP();

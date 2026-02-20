@@ -65,35 +65,44 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     </div>
     
     <div class="card">
+      <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+        <label for="run-unit-select"><b>Run Input:</b></label>
+        <select id="run-unit-select" class="dropdown-select" style="max-width:160px;" onchange="setRunInputMode(this.value)">
+          <option value="sec">Timed Run (s)</option>
+          <option value="ml">ML Dispensed</option>
+        </select>
+      </div>
       <table>
-        <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
+        <tr><th>Pump</th><th>Moisture</th><th id="run-mode-header">Timed Run (s)</th><th>Manual</th></tr>
         <tr>
           <td><span id="pumpDot1" class="pump-dot"></span>P1</td><td><span id="m1">--</span></td>
-          <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
+          <td><input type="number" id="t1" value="10" style="width:80px"> <button onclick="startPump(1)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
         </tr>
         <tr>
           <td><span id="pumpDot2" class="pump-dot"></span>P2</td><td><span id="m2">--</span></td>
-          <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
+          <td><input type="number" id="t2" value="10" style="width:80px"> <button onclick="startPump(2)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
         </tr>
         <tr>
           <td><span id="pumpDot3" class="pump-dot"></span>P3</td><td><span id="m3">--</span></td>
-          <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
+          <td><input type="number" id="t3" value="10" style="width:80px"> <button onclick="startPump(3)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
         </tr>
         <tr>
           <td><span id="pumpDot4" class="pump-dot"></span>P4</td><td><span id="m4">--</span></td>
-          <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
+          <td><input type="number" id="t4" value="10" style="width:80px"> <button onclick="startPump(4)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
         </tr>
       </table>
+      <div id="run-warning" class="error-msg" style="display:none;"></div>
     </div>
 
     <div class="card">
       <h3 style="margin-top:0;">LED Quick Actions</h3>
       <button class="save-btn" onclick="setLedModeQuick('off')">Off</button>
       <button class="save-btn" onclick="setLedModeQuick('normal')">Normal</button>
+      <button class="save-btn" onclick="setLedModeQuick('moving')">Moving</button>
       <button class="save-btn" onclick="setLedModeQuick('smart')">Smart</button>
       <button class="save-btn" onclick="setLedModeQuick('rgb')">RGB</button>
     </div>
@@ -145,6 +154,16 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <tr><td>M2</td><td><span id="raw2">--</span></td><td><button class="save-btn" onclick="saveCal(2, 'wet', 'M2 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(2, 'dry', 'M2 Dry')">Set</button></td></tr>
         <tr><td>M3</td><td><span id="raw3">--</span></td><td><button class="save-btn" onclick="saveCal(3, 'wet', 'M3 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(3, 'dry', 'M3 Dry')">Set</button></td></tr>
         <tr><td>M4</td><td><span id="raw4">--</span></td><td><button class="save-btn" onclick="saveCal(4, 'wet', 'M4 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(4, 'dry', 'M4 Dry')">Set</button></td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Pump Calibration (ml/s)</h3>
+      <table>
+        <tr><th>Pump</th><th>10s Test</th><th>Dispensed (ml)</th><th>Save</th></tr>
+        <tr><td>P1</td><td><button class="save-btn" onclick="runPumpCalibration(1)">Run 10s</button></td><td><input type="number" id="pumpMl1" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(1)">Save</button></td></tr>
+        <tr><td>P2</td><td><button class="save-btn" onclick="runPumpCalibration(2)">Run 10s</button></td><td><input type="number" id="pumpMl2" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(2)">Save</button></td></tr>
+        <tr><td>P3</td><td><button class="save-btn" onclick="runPumpCalibration(3)">Run 10s</button></td><td><input type="number" id="pumpMl3" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(3)">Save</button></td></tr>
+        <tr><td>P4</td><td><button class="save-btn" onclick="runPumpCalibration(4)">Run 10s</button></td><td><input type="number" id="pumpMl4" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(4)">Save</button></td></tr>
       </table>
     </div>
   </div>

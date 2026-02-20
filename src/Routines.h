@@ -229,7 +229,7 @@ public:
   // Returns: pump index (0-3) to activate, or -1 if none
   // duration: output parameter for how long to run (in seconds)
   int checkRoutines(String routinesJSON, int currentDay, int currentHour, int currentMinute, 
-                    int* moistureLevels, int& duration) {
+                    int* moistureLevels, int& duration, float* pumpMlPerSec) {
     
     // Parse JSON array
     StaticJsonDocument<4096> doc;
@@ -243,6 +243,8 @@ public:
     JsonArray routines = doc.as<JsonArray>();
     
     for (JsonObject routine : routines) {
+      bool enabled = routine["enabled"] | true;
+      if (!enabled) continue;
       String mode = routine["mode"] | "static";
       JsonArray days = routine["days"];
       
@@ -260,8 +262,12 @@ public:
             int pump = routine["p"] | 0;
             int amount = routine["val"] | 100;
             
-            // Convert ml to seconds (rough estimate: 100ml = 10s)
-            duration = amount / 10;
+            // Convert ml to seconds using per-pump calibration.
+            float rate = 21.5f;
+            if (pumpMlPerSec && pump >= 1 && pump <= 4 && pumpMlPerSec[pump - 1] > 0.01f) {
+              rate = pumpMlPerSec[pump - 1];
+            }
+            duration = (int)ceil((float)amount / rate);
             if (duration < 1) duration = 1;
             if (duration > 10) duration = 10; // Respect watchdog window
             
@@ -369,6 +375,8 @@ public:
     JsonArray automations = doc.as<JsonArray>();
     
     for (JsonObject auto_obj : automations) {
+      bool enabled = auto_obj["enabled"] | true;
+      if (!enabled) continue;
       // Check WHEN condition
       bool whenTriggered = checkWhenCondition(auto_obj["when"], 
                                                moistureLevels, waterLevel, pumpStates, lidOff);

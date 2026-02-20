@@ -114,6 +114,7 @@ int pumpTimeoutS = 10;
 bool manualOverride = false;
 unsigned long lastWhatsAppSentMs = 0;
 unsigned long lidOffStartMs = 0;
+float pumpMlPerSec[4] = {21.5f, 21.5f, 21.5f, 21.5f};
 
 // ============================================================
 // =================== FORWARD DECLARATIONS ===================
@@ -137,6 +138,7 @@ void drawLedRainbow();
 uint32_t parseHexColor(String hex);
 String colorToHex(uint32_t color);
 String urlEncode(const String& src);
+int secondsForMl(int pumpIdx, float mlAmount);
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -225,8 +227,14 @@ String getCurrentTimeString() {
 }
 
 void syncRTCFromWiFi() {
-  timeClient.update();
+  if (!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
   unsigned long epochTime = timeClient.getEpochTime();
+  if (epochTime < 1000000000UL) {
+    Serial.println("NTP invalid epoch, skipping RTC sync");
+    return;
+  }
   
   // Convert epoch to DateTime and save to RTC hardware
   rtc.adjust(DateTime(epochTime)); 
@@ -304,6 +312,16 @@ String urlEncode(const String& src) {
     }
   }
   return out;
+}
+
+int secondsForMl(int pumpIdx, float mlAmount) {
+  if (pumpIdx < 0 || pumpIdx >= 4) return 0;
+  float rate = pumpMlPerSec[pumpIdx];
+  if (rate <= 0.01f) rate = 21.5f;
+  if (mlAmount <= 0.0f) return 0;
+  float seconds = mlAmount / rate;
+  int roundedUp = (int)ceil(seconds);
+  return max(1, roundedUp);
 }
 
 
@@ -402,7 +420,7 @@ void handleRunRoutine() {
         
         if (r["mode"] == "static") {
           int amount = r["val"] | 100;
-          duration = amount / 10;
+          duration = secondsForMl(pump - 1, (float)amount);
         } else {
           duration = 10;
         }
@@ -959,13 +977,20 @@ void handleStatus() {
   json += "\"raw\":[" + String(rawMoistureValues[0]) + "," + String(rawMoistureValues[1]) + "," 
                       + String(rawMoistureValues[2]) + "," + String(rawMoistureValues[3]) + "],";
   json += "\"pumps\":[" + String(pumpActive[0] ? 1 : 0) + "," + String(pumpActive[1] ? 1 : 0) + "," +
-                      String(pumpActive[2] ? 1 : 0) + "," + String(pumpActive[3] ? 1 : 0) + "]}";
+                      String(pumpActive[2] ? 1 : 0) + "," + String(pumpActive[3] ? 1 : 0) + "],";
+  json += "\"override\":" + String(manualOverride ? "true" : "false") + ",";
+  json += "\"pumpMl\":[" + String(pumpMlPerSec[0], 3) + "," + String(pumpMlPerSec[1], 3) + "," +
+                       String(pumpMlPerSec[2], 3) + "," + String(pumpMlPerSec[3], 3) + "]}";
   
   server.send(200, "application/json", json);
 }
 
 
 void handlePump() {
+  bool apiMode = server.hasArg("api");
+  bool actionTaken = false;
+  String response = "OK";
+
   if (server.hasArg("p") && server.hasArg("t")) {
     int pIdx = server.arg("p").toInt() - 1;
     int duration = server.arg("t").toInt();
@@ -973,6 +998,21 @@ void handlePump() {
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Timed Run P%d for %ds\n", pIdx + 1, duration);
       activatePump(pIdx, duration);
+      actionTaken = true;
+    }
+  }
+  else if (server.hasArg("p") && server.hasArg("ml")) {
+    int pIdx = server.arg("p").toInt() - 1;
+    float mlAmount = server.arg("ml").toFloat();
+    if (pIdx >= 0 && pIdx < 4) {
+      int duration = secondsForMl(pIdx, mlAmount);
+      if (duration > pumpTimeoutS && !manualOverride) {
+        response = "OVERRIDE_REQUIRED";
+      } else {
+        Serial.printf("WEB: ML Run P%d for %.1fml -> %ds\n", pIdx + 1, mlAmount, duration);
+        activatePump(pIdx, duration);
+        actionTaken = true;
+      }
     }
   } 
   else if (server.hasArg("on")) {
@@ -980,6 +1020,7 @@ void handlePump() {
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Manual ON P%d\n", pIdx + 1);
       activatePump(pIdx, 0);  // Use 0 to trigger default
+      actionTaken = true;
     }
   } 
   else if (server.hasArg("off")) {
@@ -987,11 +1028,17 @@ void handlePump() {
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Manual OFF P%d\n", pIdx + 1);
       stopPump(pIdx);
+      actionTaken = true;
     }
   }
 
-  server.sendHeader("Location", "/");
-  server.send(303);
+  if (apiMode) {
+    if (!actionTaken && response == "OK") response = "INVALID";
+    server.send(200, "text/plain", response);
+  } else {
+    server.sendHeader("Location", "/");
+    server.send(303);
+  }
 }
 
 void handleCalibrate() {
@@ -1025,6 +1072,19 @@ void handleCalibrate() {
         dryMax[sensorIdx-1] = val;
         String key = "dry" + String(sensorIdx);
         preferences.putInt(key.c_str(), val);
+      }
+    }
+    else if (type == "pumpMl") {
+      if (sensorIdx > 0 && sensorIdx <= 4 && server.hasArg("ml")) {
+        float ml = server.arg("ml").toFloat();
+        float sec = server.hasArg("sec") ? server.arg("sec").toFloat() : 10.0f;
+        if (ml > 0.0f && sec > 0.1f) {
+          pumpMlPerSec[sensorIdx - 1] = ml / sec;
+          if (pumpMlPerSec[sensorIdx - 1] < 0.01f) pumpMlPerSec[sensorIdx - 1] = 0.01f;
+          String key = "pml" + String(sensorIdx);
+          preferences.putFloat(key.c_str(), pumpMlPerSec[sensorIdx - 1]);
+          Serial.printf("PUMP CAL: P%d = %.3f ml/s\n", sensorIdx, pumpMlPerSec[sensorIdx - 1]);
+        }
       }
     }
 
@@ -1258,6 +1318,13 @@ void setup() {
 
   // 5. CALIBRATION & PUMPS
   calibration.loadAll(wetMin, dryMax, waterMinCM, waterMaxCM, pumpTimeoutS);
+  preferences.begin("calib", true);
+  for (int i = 0; i < 4; i++) {
+    String key = "pml" + String(i + 1);
+    pumpMlPerSec[i] = preferences.getFloat(key.c_str(), 21.5f);
+    if (pumpMlPerSec[i] <= 0.01f) pumpMlPerSec[i] = 21.5f;
+  }
+  preferences.end();
   bootSwirl(sf++);
 
   for (int i=0; i<4; i++) { 
@@ -1281,9 +1348,13 @@ void setup() {
   server.on("/pump", handlePump);
   server.on("/calibrate", handleCalibrate);
   server.on("/routines", handleGetRoutines);
+  server.on("/routines", HTTP_POST, handleSaveRoutines);
   server.on("/automations", handleGetAutomations);
+  server.on("/automations", HTTP_POST, handleSaveAutomations);
   server.on("/routine/run", handleRunRoutine);
+  server.on("/routine/run", HTTP_POST, handleRunRoutine);
   server.on("/automation/run", handleRunAutomation);
+  server.on("/automation/run", HTTP_POST, handleRunAutomation);
   server.on("/storage/info", handleStorageInfo);
   server.on("/led/status", handleLedStatus);
   server.on("/led/config", HTTP_POST, handleLedConfig);
@@ -1386,7 +1457,7 @@ void loop()
     int duration = 0;
     int pumpToRun = routineExec.checkRoutines(
         routines, currentDay, currentHour, currentMinute,
-        moisturePercent, duration);
+        moisturePercent, duration, pumpMlPerSec);
 
     if (pumpToRun >= 0 && pumpToRun < 4)
     {
