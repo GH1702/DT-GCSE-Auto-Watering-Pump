@@ -9,9 +9,9 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
-#include "index_html.h"
+/*#include "index_html.h"
 #include "style_css.h"
-#include "script_js.h"
+#include "script_js.h"*/
 #include "Routines.h"
 #include <Adafruit_VL53L0X.h>
 #include <Adafruit_BMP280.h>
@@ -43,13 +43,29 @@ const String baseTopic = "esp32/pumps/";
 #define SCREEN_HEIGHT 64
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// ---------- LED Config----------
+// ---------- LED Config & Variables ----------
 Adafruit_NeoPixel ring(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-enum LedMode { LED_WAVE, LED_SOLID, LED_SMART };
-LedMode currentLedMode = LED_WAVE;   // 🌊 DEFAULT MODE
-float waveOffset = 0.0;
-float waveSpeed = 0.08;
-float waveLength = 20.0;
+
+
+// Match these to the buttons in your HTML/JS
+enum LedMode { 
+  MODE_SOLID, 
+  MODE_BREATHE, 
+  MODE_RAINBOW, 
+  MODE_CHASE, 
+  MODE_PULSE, 
+  MODE_GROW,
+  MODE_WAVE // Keeping your original wave as an option
+};
+
+LedMode currentLedMode = MODE_SOLID;
+bool ledMasterPower = true;
+uint32_t targetColor = ring.Color(255, 0, 0); // Default Red
+int globalBrightness = 128;
+
+// Animation State tracking
+unsigned long lastEffectUpdate = 0;
+uint16_t effectStep = 0;
 
 // ---------- Objects ----------
 WiFiUDP ntpUDP;
@@ -88,16 +104,24 @@ int waterMinCM = 30;
 int waterMaxCM = 5;
 int waterLevelPercent = 0;
 
+// --- TIME TRACKING VARIABLES ---
 unsigned long lastWaterRead     = 0;
 unsigned long lastMoistureRead  = 0;
 unsigned long lastMoistureMQTT  = 0;
 unsigned long lastClockUpdate   = 0;
 unsigned long lastWebAccessTime = 0;
 unsigned long lastRoutineCheck = 0;
-unsigned long lastAutomationCheck = 0;
+unsigned long lastAutomationCheck = 0; 
+unsigned long lastLedUpdate     = 0; 
+
+// --- ANIMATION VARIABLES (Restored) ---
+float waveOffset = 0.0;
+float waveLength = 10.0; 
+float waveSpeed = 0.05;  
+
+// --- STATE VARIABLES ---
 int lastMinute = -1;
 long waterLevelCM = -1;
-
 int pumpTimeoutS = 10;
 bool manualOverride = false;
 
@@ -109,6 +133,7 @@ void pumpActionCallback(int pump, int duration);
 void whatsappActionCallback(String message);
 void activatePump(int idx, int seconds);  // NO DEFAULT HERE
 void stopPump(int idx);
+void drawWave(); // <--- ADD THIS LINE
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -219,7 +244,148 @@ int getTankPercent() {
   return (int)percent;
 }
 
+// ============================================================
+// ====================== LED LOGIC & EFFECTS =================
+// ============================================================
 
+// Helper to convert HEX string (e.g. "FF0000") to uint32_t
+uint32_t hexToColor(String hex) {
+  if (hex.startsWith("#")) hex = hex.substring(1);
+  long number = strtoul(hex.c_str(), NULL, 16);
+  return ring.Color((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF);
+}
+
+void handleLedControl() {
+  // 1. Handle Power
+  if (server.hasArg("power")) {
+    String p = server.arg("power");
+    ledMasterPower = (p == "on");
+  }
+
+  // 2. Handle Color (Hex)
+  if (server.hasArg("color")) {
+    targetColor = hexToColor(server.arg("color"));
+    // If in solid mode, apply immediately
+    if (currentLedMode == MODE_SOLID) {
+       ring.fill(targetColor);
+       ring.show();
+    }
+  }
+
+  // 3. Handle Brightness
+  if (server.hasArg("brightness")) {
+    globalBrightness = server.arg("brightness").toInt();
+    ring.setBrightness(globalBrightness);
+    if (currentLedMode == MODE_SOLID) ring.show();
+  }
+
+  // 4. Handle Mode
+  if (server.hasArg("mode")) {
+    String m = server.arg("mode");
+    effectStep = 0; // Reset animation step on change
+    ring.fill(0);   // Clear ring
+    
+    if (m == "solid") currentLedMode = MODE_SOLID;
+    else if (m == "breathe") currentLedMode = MODE_BREATHE;
+    else if (m == "rainbow") currentLedMode = MODE_RAINBOW;
+    else if (m == "chase") currentLedMode = MODE_CHASE;
+    else if (m == "pulse") currentLedMode = MODE_PULSE;
+    else if (m == "grow") currentLedMode = MODE_GROW;
+  }
+
+  server.send(200, "text/plain", "OK");
+  Serial.println("LED Updated via Web");
+}
+
+void renderLedEffects() {
+  if (!ledMasterPower) {
+    ring.clear();
+    ring.show();
+    return;
+  }
+
+  unsigned long now = millis();
+  // Adjust speed per effect
+  int speed = 20; 
+  if (currentLedMode == MODE_BREATHE) speed = 15;
+  if (currentLedMode == MODE_RAINBOW) speed = 20;
+  if (currentLedMode == MODE_CHASE) speed = 40;
+
+  if (now - lastEffectUpdate < speed) return;
+  lastEffectUpdate = now;
+
+  switch (currentLedMode) {
+    case MODE_SOLID:
+      ring.fill(targetColor);
+      ring.show();
+      break;
+
+    case MODE_BREATHE: {
+      // Uses the 'targetColor' but fades it in and out
+      float val = (exp(sin(millis()/2000.0*PI)) - 0.36787944)*108.0;
+      // Extract RGB from targetColor
+      uint8_t r = (uint8_t)(targetColor >> 16);
+      uint8_t g = (uint8_t)(targetColor >> 8);
+      uint8_t b = (uint8_t)targetColor;
+      // Scale by breath value
+      ring.fill(ring.Color(r * val/255, g * val/255, b * val/255));
+      ring.show();
+      break;
+    }
+
+    case MODE_RAINBOW: {
+      for(int i=0; i<NUM_LEDS; i++) {
+        int pixelHue = effectStep + (i * 65536L / NUM_LEDS);
+        ring.setPixelColor(i, ring.gamma32(ring.ColorHSV(pixelHue)));
+      }
+      ring.show();
+      effectStep += 256;
+      break;
+    }
+
+    case MODE_CHASE: { // Added braces for scope
+      // Manual "FadeToBlack" for Adafruit_NeoPixel
+      for(int i=0; i<NUM_LEDS; i++) {
+          uint32_t c = ring.getPixelColor(i);
+          uint8_t r = (uint8_t)(c >> 16);
+          uint8_t g = (uint8_t)(c >> 8);
+          uint8_t b = (uint8_t)c;
+          // Dim by roughly 25% (64/255)
+          r = (r * 191) / 255; 
+          g = (g * 191) / 255;
+          b = (b * 191) / 255;
+          ring.setPixelColor(i, ring.Color(r, g, b));
+      }
+      
+      int pos = (effectStep/2) % NUM_LEDS;
+      ring.setPixelColor(pos, targetColor);
+      ring.show();
+      effectStep++;
+      break;
+    }
+      
+    case MODE_PULSE: { // Added braces for scope
+      // Quick heartbeat pulse using target color
+      ring.fill(0);
+      if ((effectStep % 20) < 5) ring.fill(targetColor); // Flash on
+      ring.show();
+      effectStep++;
+      break;
+    }
+
+    case MODE_GROW: { // Added braces for scope
+      // Purple/Blue spectrum for plants
+      ring.fill(ring.Color(180, 0, 255)); // Grow light purple
+      ring.show();
+      break;
+    }
+      
+    case MODE_WAVE: { // Added braces for scope
+      drawWave(); 
+      break;
+    }
+  }
+}
 
 // ============================================================
 // ====================== PUMP LOGIC ==========================
@@ -821,37 +987,30 @@ void setup() {
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(5, 24); // Adjusted cursor for "Booting..."
+  display.setCursor(5, 24); 
   display.print("Booting...");
   display.display();
 
-// --- 2. HIGH-SPEED 2-SECOND ANIMATION ---
+  // --- 2. HIGH-SPEED 2-SECOND ANIMATION ---
   unsigned long bootStart = millis();
   while (millis() - bootStart < 2000) {
     unsigned long elapsed = millis() - bootStart;
     int pct = (elapsed * 100) / 2000;
-    
-    // INCREASE THIS: sf += 2 makes it twice as fast
     bootSwirl(sf += 2);   
-    
     drawProgressBar(pct);
-    
-    // DECREASE THIS: 10ms is about the limit for stable OLED updates
     delay(10); 
   }
 
-  // 2. PIN MODES & SWITCH DETECTION
+  // 3. PIN MODES & SWITCH DETECTION
   pinMode(LID_PIN, INPUT_PULLDOWN);
   pinMode(SWITCH_PIN_I, INPUT_PULLUP);
   pinMode(SWITCH_PIN_II, INPUT_PULLUP);
   
-  // Swirl while waiting for pins to settle (replaces hard delay)
   for(int i=0; i<10; i++) { delay(10); bootSwirl(sf++); }
 
   int p1 = digitalRead(SWITCH_PIN_I);
   int p3 = digitalRead(SWITCH_PIN_II);
 
-  // Set BootMode based on your truth table
   if (p1 == HIGH && p3 == LOW) {
     bootMode = MODE_AP;
     Serial.println("Mode: AP");
@@ -863,13 +1022,11 @@ void setup() {
     Serial.println("Mode: WiFi");
   }
   bootSwirl(sf++);
-  
 
-  // 3. INITIAL WIFI CONNECT (Animated)
+  // 4. INITIAL WIFI CONNECT
   if (bootMode != MODE_AP) {
     WiFi.begin(ssid, password);
     unsigned long startAttempt = millis();
-    // Swirl for up to 10 seconds or until connected
     while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt < 10000)) {
       bootSwirl(sf++);
       delay(50);
@@ -877,35 +1034,29 @@ void setup() {
   }
   bootSwirl(sf++);
 
-  // 4. STORAGE & SENSORS (Swirl after each block to prevent freezing)
+  // 5. STORAGE & SENSORS
   if (!storage.begin()) Serial.println("Storage Fail");
   bootSwirl(sf++);
 
-  // Inside setup()
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
   } else {
-    // This is the "Magic" check:
     if (rtc.lostPower()) {
       Serial.println("RTC power failure! Setting to compile time...");
-      // This only runs if the battery was removed or died
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
-    
-    // If we are in a mode with WiFi, update the chip
     if (WiFi.status() == WL_CONNECTED) {
       syncRTCFromWiFi();
     }
   }
   bootSwirl(sf++);
 
-  // Sensors (BMP and Lox)
   bmp.begin(0x76);
   bootSwirl(sf++);
   lox.begin();
   bootSwirl(sf++);
 
-  // 5. CALIBRATION & PUMPS
+  // 6. CALIBRATION & PUMPS
   calibration.loadAll(wetMin, dryMax, waterMinCM, waterMaxCM, pumpTimeoutS);
   bootSwirl(sf++);
 
@@ -915,7 +1066,7 @@ void setup() {
     bootSwirl(sf++);
   }
 
-  // 6. SECONDARY NETWORK CONFIG
+  // 7. SECONDARY NETWORK CONFIG
   if (bootMode == MODE_AP) {
     WiFi.softAP("ESP32-Watering", "watering123");
   } else if (bootMode == MODE_MQTT) {
@@ -925,7 +1076,7 @@ void setup() {
   }
   bootSwirl(sf++);
 
-  // 7. WEB SERVER ENDPOINTS
+  // 8. WEB SERVER ENDPOINTS
   server.on("/", handleRoot);
   server.on("/status", handleStatus);
   server.on("/pump", handlePump);
@@ -935,17 +1086,14 @@ void setup() {
   server.on("/routine/run", handleRunRoutine);
   server.on("/automation/run", handleRunAutomation);
   server.on("/storage/info", handleStorageInfo);
+  server.on("/led", handleLedControl);
   bootSwirl(sf++);
 
-  // 8. SYSTEM READY
+  // 9. SYSTEM READY
   server.begin(); 
   Serial.println("System Ready");
-
-  // Final visual clear
   ring.clear();
   ring.show();
-  
-  // Set LED brightness for main loop
   ring.setBrightness(255);
 }
 
@@ -954,56 +1102,45 @@ void loop()
   unsigned long now = millis();
   server.handleClient();
 
-  // Handle MQTT connectivity if in MQTT mode
-  if (bootMode == MODE_MQTT)
-  {
-    if (!mqtt.connected())
-      reconnectMQTT();
+  // Handle MQTT
+  if (bootMode == MODE_MQTT) {
+    if (!mqtt.connected()) reconnectMQTT();
     mqtt.loop();
   }
 
   // --- LID STATUS ---
   bool lidOff = (digitalRead(LID_PIN) == HIGH);
 
-  // --- Water level (PAUSED if lid is off) ---
-  if (!lidOff && (now - lastWaterRead > 3000))
-  {
+  // --- Water level ---
+  if (!lidOff && (now - lastWaterRead > 3000)) {
     long d = updateWaterLevel(); 
-    // updateWaterLevel() already updates waterLevelPercent internally
     lastWaterRead = now;
   }
 
-  // --- LED SYSTEM (Modified for Lid/Animation) ---
-  static unsigned long lastLedUpdate = 0;
-  if (now - lastLedUpdate > 20)
-  {
-    lastLedUpdate = now;
-    if (lidOff) {
-      drawBreathingRed(); // Override with Red Breath
-    } else {
-      switch (currentLedMode) {
-        case LED_WAVE:  drawWave();  break;
-        case LED_SOLID: /* placeholder */ break;
-        case LED_SMART: /* placeholder */ break;
-      }
+  // --- LED SYSTEM ---
+  // If Lid is OFF, force Red Breath alert
+  if (lidOff) {
+    if (now - lastLedUpdate > 20) {
+       drawBreathingRed(); 
+       lastLedUpdate = now;
     }
+  } 
+  // Otherwise run the Web Controlled effects
+  else {
+     renderLedEffects();
   }
-
-  // --- Pump safety & timers ---
-  for (int i = 0; i < 4; i++)
-  {
-    if (pumpActive[i] && pumpOffTime[i] > 0 && millis() >= pumpOffTime[i])
-    {
+  
+  // --- Pump safety ---
+  for (int i = 0; i < 4; i++) {
+    if (pumpActive[i] && pumpOffTime[i] > 0 && millis() >= pumpOffTime[i]) {
       stopPump(i);
       Serial.printf("PUMP %d STOPPED\n", i + 1);
     }
   }
 
   // --- Moisture sensors ---
-  if (now - lastMoistureRead > 2000)
-  {
-    for (int i = 0; i < 4; i++)
-    {
+  if (now - lastMoistureRead > 2000) {
+    for (int i = 0; i < 4; i++) {
       rawMoistureValues[i] = readFastADC(moisturePins[i]);
       moisturePercent[i] = mapMoistToPercent(rawMoistureValues[i], i);
     }
@@ -1011,16 +1148,13 @@ void loop()
   }
 
   // --- Routine checking ---
-  if (bootMode == MODE_MQTT)
-  {
-    // REPLACE timeClient calls with rtc.now()
+  if (bootMode == MODE_MQTT) {
     DateTime nowRTC = rtc.now();
     int currentHour = nowRTC.hour();
     int currentMinute = nowRTC.minute();
-    int currentDay = nowRTC.dayOfTheWeek(); // NTPClient uses 0-6, RTClib also uses 0-6 (Sun-Sat)
+    int currentDay = nowRTC.dayOfTheWeek(); 
 
-    if (currentMinute != lastMinute)
-    {
+    if (currentMinute != lastMinute) {
       lastMinute = currentMinute;
       String routines = storage.loadRoutines();
       int duration = 0;
@@ -1028,8 +1162,7 @@ void loop()
           routines, currentDay, currentHour, currentMinute,
           moisturePercent, duration);
 
-      if (pumpToRun >= 0 && pumpToRun < 4)
-      {
+      if (pumpToRun >= 0 && pumpToRun < 4) {
         Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
         activatePump(pumpToRun, duration);
       }
@@ -1037,8 +1170,7 @@ void loop()
   }
 
   // --- Automation checking ---
-  if (now - lastAutomationCheck > 5000)
-  {
+  if (now - lastAutomationCheck > 5000) {
     lastAutomationCheck = now;
     String automations = storage.loadAutomations();
     int hour = bootMode == MODE_MQTT ? timeClient.getHours() : 12;
@@ -1052,14 +1184,14 @@ void loop()
 
   // --- OLED refresh ---
   static unsigned long lastDraw = 0;
-  if (now - lastDraw > 1500)
-  {
+  if (now - lastDraw > 1500) {
     drawOLED();
     lastDraw = now;
   }
+  
+  // --- RTC Sync ---
   static unsigned long lastSync = 0;
-  if (WiFi.status() == WL_CONNECTED && (millis() - lastSync > 86400000))
-  { // Once every 24h
+  if (WiFi.status() == WL_CONNECTED && (millis() - lastSync > 86400000)) { 
     syncRTCFromWiFi();
     lastSync = millis();
   }
