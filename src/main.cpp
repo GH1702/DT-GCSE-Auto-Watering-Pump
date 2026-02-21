@@ -1402,11 +1402,14 @@ void setup() {
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
   } else {
-    // This is the "Magic" check:
-    if (rtc.lostPower()) {
-      Serial.println("RTC power failure! Setting to compile time...");
-      // This only runs if the battery was removed or died
-      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    DateTime bootNow = rtc.now();
+    bool rtcBad = rtc.lostPower() || !isRTCValid(bootNow);
+    if (rtcBad) {
+      Serial.println("RTC invalid/power-loss detected");
+      if (!restoreRTCFromBackup()) {
+        Serial.println("No RTC backup found, setting compile time");
+        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+      }
     }
     
     // If we are in a mode with WiFi, update the chip
@@ -1493,6 +1496,13 @@ void setup() {
   server.on("/led/status", handleLedStatus);
   server.on("/led/config", HTTP_POST, handleLedConfig);
   server.on("/time/set", HTTP_POST, handleSetTime);
+  server.onNotFound([]() {
+    if (bootMode == MODE_AP) {
+      handleRoot();
+    } else {
+      server.send(404, "text/plain", "Not Found");
+    }
+  });
   bootSwirl(sf++);
 
   // 8. SYSTEM READY
@@ -1631,5 +1641,13 @@ void loop()
   { // Once every 24h
     syncRTCFromWiFi();
     lastSync = millis();
+  }
+
+  if (millis() - lastRtcPersistMs > 60000UL) {
+    DateTime dt = rtc.now();
+    if (isRTCValid(dt)) {
+      persistRTCBackup(dt.unixtime());
+    }
+    lastRtcPersistMs = millis();
   }
 }
