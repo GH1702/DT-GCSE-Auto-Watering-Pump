@@ -242,6 +242,28 @@ void syncRTCFromWiFi() {
   Serial.println("RTC Hardware Synced with NTP");
 }
 
+bool isRTCValid(const DateTime& dt) {
+  if (dt.year() < 2024 || dt.year() > 2100) return false;
+  if (dt.month() < 1 || dt.month() > 12) return false;
+  if (dt.day() < 1 || dt.day() > 31) return false;
+  if (dt.hour() > 23 || dt.minute() > 59 || dt.second() > 59) return false;
+  return true;
+}
+
+DateTime getRTCNowSafe() {
+  DateTime now = rtc.now();
+  if (isRTCValid(now)) return now;
+
+  Serial.println("RTC invalid reading, trying NTP resync...");
+  if (WiFi.status() == WL_CONNECTED) {
+    syncRTCFromWiFi();
+    now = rtc.now();
+  }
+  if (isRTCValid(now)) return now;
+
+  return DateTime(2026, 1, 1, 0, 0, 0);
+}
+
 int getTankPercent() {
   long distance = readWaterDistanceCM();
   if (distance < 0) return -1;
@@ -414,7 +436,8 @@ void handleRunRoutine() {
     JsonArray arr = doc.as<JsonArray>();
     
     for (JsonObject r : arr) {
-      if (String(r["id"].as<long>()) == routineId) {
+      String itemId = r["id"].is<const char*>() ? r["id"].as<String>() : String((long long)r["id"].as<long long>());
+      if (itemId == routineId) {
         int pump = r["p"] | 0;
         int duration = 10;
         
@@ -447,7 +470,8 @@ void handleRunAutomation() {
     JsonArray arr = doc.as<JsonArray>();
     
     for (JsonObject a : arr) {
-      if (String(a["id"].as<long>()) == autoId) {
+      String itemId = a["id"].is<const char*>() ? a["id"].as<String>() : String((long long)a["id"].as<long long>());
+      if (itemId == autoId) {
         JsonObject doAction = a["do"];
         String type = doAction["type"] | "";
         
@@ -960,12 +984,17 @@ void handleStatus() {
   
   float tempC = readTemperatureC();   // read temperature
   long waterRaw = readWaterDistanceCM();
-  DateTime nowRTC = rtc.now();
+  DateTime nowRTC = getRTCNowSafe();
   const char* dayNames[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
   char rtcTimeBuf[6];
   sprintf(rtcTimeBuf, "%02d:%02d", nowRTC.hour(), nowRTC.minute());
 
   String json = "{";
+  String modeStr = "WIFI";
+  if (bootMode == MODE_AP) modeStr = "AP";
+  else if (bootMode == MODE_MQTT) modeStr = "MQTT";
+  json += "\"mode\":\"" + modeStr + "\",";
+  json += "\"apMode\":" + String(bootMode == MODE_AP ? "true" : "false") + ",";
   json += "\"water\":" + String(waterLevelPercent) + ",";
   json += "\"waterRaw\":" + String(waterRaw) + ",";
   json += "\"lidOff\":" + String((digitalRead(LID_PIN) == HIGH) ? "true" : "false") + ",";
@@ -1142,7 +1171,7 @@ void drawOLED() {
   }
 
   // Time (Centered)
-  DateTime rtcNow = rtc.now();
+  DateTime rtcNow = getRTCNowSafe();
   char timeBuffer[6];
   sprintf(timeBuffer, "%02d:%02d", rtcNow.hour(), rtcNow.minute());
   display.getTextBounds(timeBuffer, 0, 0, &x1, &y1, &w, &h);
@@ -1197,7 +1226,7 @@ void drawOLED() {
     display.print("OFF");
   }
 
-  DateTime now = rtc.now();
+  DateTime now = getRTCNowSafe();
   Serial.printf("RTC Time: %02d:%02d:%02d\n", now.hour(), now.minute(), now.second());
   
   display.display();
@@ -1340,6 +1369,32 @@ void setup() {
     mqtt.setServer(mqtt_server, 1883);
     mqtt.setCallback(mqttCallback);
   }
+
+  if (MDNS.begin("plant")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("mDNS started: plant.local");
+  } else {
+    Serial.println("mDNS failed to start");
+  }
+
+  if (bootMode == MODE_WIFI || bootMode == MODE_AP) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    if (bootMode == MODE_AP) {
+      display.println("AP Mode Ready");
+      display.print("IP: ");
+      display.println(WiFi.softAPIP().toString());
+      display.println("Host: plant.local");
+    } else {
+      display.println("WiFi Mode Ready");
+      display.print("IP: ");
+      display.println(WiFi.localIP().toString());
+    }
+    display.display();
+    delay(2000);
+  }
   bootSwirl(sf++);
 
   // 7. WEB SERVER ENDPOINTS
@@ -1347,9 +1402,9 @@ void setup() {
   server.on("/status", handleStatus);
   server.on("/pump", handlePump);
   server.on("/calibrate", handleCalibrate);
-  server.on("/routines", handleGetRoutines);
+  server.on("/routines", HTTP_GET, handleGetRoutines);
   server.on("/routines", HTTP_POST, handleSaveRoutines);
-  server.on("/automations", handleGetAutomations);
+  server.on("/automations", HTTP_GET, handleGetAutomations);
   server.on("/automations", HTTP_POST, handleSaveAutomations);
   server.on("/routine/run", handleRunRoutine);
   server.on("/routine/run", HTTP_POST, handleRunRoutine);
@@ -1445,7 +1500,7 @@ void loop()
   }
 
   // --- Routine checking ---
-  DateTime nowRTC = rtc.now();
+  DateTime nowRTC = getRTCNowSafe();
   int currentHour = nowRTC.hour();
   int currentMinute = nowRTC.minute();
   int currentDay = (nowRTC.dayOfTheWeek() + 6) % 7; // Convert Sun=0..Sat=6 to Mon=0..Sun=6
@@ -1471,7 +1526,7 @@ void loop()
   {
     lastAutomationCheck = now;
     String automations = storage.loadAutomations();
-    DateTime autoNow = rtc.now();
+    DateTime autoNow = getRTCNowSafe();
     int hour = autoNow.hour();
     int minute = autoNow.minute();
 

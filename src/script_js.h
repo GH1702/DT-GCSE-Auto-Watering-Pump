@@ -101,6 +101,7 @@ const dayNames = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 let runInputMode = 'sec';
 let pumpMlRates = [21.5, 21.5, 21.5, 21.5];
 let overrideEnabled = false;
+let apNoticeShown = false;
 
 function loadRoutinesFromESP() {
   fetch('/routines')
@@ -862,6 +863,10 @@ function updateStatus() {
       }
       if (data.rtcTime) document.getElementById("dashTime").innerText = data.rtcTime;
       if (data.rtcDay) document.getElementById("dashDay").innerText = data.rtcDay;
+      if (data.apMode && !apNoticeShown) {
+        apNoticeShown = true;
+        alert('AP mode active: WhatsApp and NTP clock sync will not work without internet.');
+      }
       overrideEnabled = !!data.override;
       if (Array.isArray(data.pumpMl) && data.pumpMl.length === 4) {
         pumpMlRates = data.pumpMl.map(v => Number(v) || 21.5);
