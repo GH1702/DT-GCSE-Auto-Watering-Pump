@@ -359,6 +359,10 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <label class="matrix-title">Threshold (%)</label>
         <input type="number" id="notif-threshold" min="0" max="100" value="30" class="dropdown-select">
       </div>
+      <div id="when-water-group" class="hidden condition-group">
+        <label class="matrix-title">Tank Threshold (%)</label>
+        <input type="number" id="notif-water-threshold" min="0" max="100" value="30" class="dropdown-select">
+      </div>
       
       <div id="when-pump-group" class="hidden condition-group">
         <label class="matrix-title">Pump</label>
@@ -399,6 +403,10 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <label class="matrix-title">Threshold (%)</label>
         <input type="number" id="notif-if-threshold" min="0" max="100" value="50" class="dropdown-select">
       </div>
+      <div id="if-water-group" class="hidden condition-group">
+        <label class="matrix-title">Tank Threshold (%)</label>
+        <input type="number" id="notif-if-water-threshold" min="0" max="100" value="50" class="dropdown-select">
+      </div>
       
       <div id="if-time-group" class="hidden condition-group">
         <label class="matrix-title">From</label>
@@ -426,6 +434,8 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <div id="do-whatsapp-group" class="hidden condition-group">
         <label class="matrix-title">Message</label>
         <textarea id="notif-message" placeholder="Enter message..." class="dropdown-select" style="min-height:80px; resize:vertical;"></textarea>
+        <label class="matrix-title">Repeat Every (hours, 0 = no limit)</label>
+        <input type="number" id="notif-repeat-hours" min="0" value="0" class="dropdown-select">
         <div style="font-size:0.75em; color:#666; margin-top:5px;">
           Variables: {sensor}, {value}, {pump}, {tank}
         </div>

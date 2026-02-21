@@ -7,6 +7,7 @@
 #include <WiFiUdp.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <DNSServer.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -69,6 +70,7 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 WebServer server(80);
+DNSServer dnsServer;
 Preferences preferences;
 
 
@@ -115,6 +117,8 @@ bool manualOverride = false;
 unsigned long lastWhatsAppSentMs = 0;
 unsigned long lidOffStartMs = 0;
 float pumpMlPerSec[4] = {21.5f, 21.5f, 21.5f, 21.5f};
+long rtcTimeOffsetSec = 0;
+unsigned long lastRtcPersistMs = 0;
 
 // ============================================================
 // =================== FORWARD DECLARATIONS ===================
@@ -127,6 +131,7 @@ void activatePump(int idx, int seconds);  // NO DEFAULT HERE
 void stopPump(int idx);
 void handleLedStatus();
 void handleLedConfig();
+void handleSetTime();
 void loadLedSettings();
 void saveLedSettings();
 void drawLedOff();
@@ -139,6 +144,10 @@ uint32_t parseHexColor(String hex);
 String colorToHex(uint32_t color);
 String urlEncode(const String& src);
 int secondsForMl(int pumpIdx, float mlAmount);
+void loadRtcOffset();
+void saveRtcOffset(long offsetSec);
+bool restoreRTCFromBackup();
+void persistRTCBackup(unsigned long epochLocal);
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -227,6 +236,7 @@ String getCurrentTimeString() {
 }
 
 void syncRTCFromWiFi() {
+  timeClient.setTimeOffset(rtcTimeOffsetSec);
   if (!timeClient.update()) {
     timeClient.forceUpdate();
   }
@@ -238,8 +248,38 @@ void syncRTCFromWiFi() {
   
   // Convert epoch to DateTime and save to RTC hardware
   rtc.adjust(DateTime(epochTime)); 
+  persistRTCBackup(epochTime);
   
   Serial.println("RTC Hardware Synced with NTP");
+}
+
+void loadRtcOffset() {
+  preferences.begin("system", true);
+  rtcTimeOffsetSec = preferences.getLong("tzofs", 0);
+  preferences.end();
+}
+
+void saveRtcOffset(long offsetSec) {
+  preferences.begin("system", false);
+  preferences.putLong("tzofs", offsetSec);
+  preferences.end();
+}
+
+void persistRTCBackup(unsigned long epochLocal) {
+  if (epochLocal < 1700000000UL) return;
+  preferences.begin("system", false);
+  preferences.putULong("rtclast", epochLocal);
+  preferences.end();
+}
+
+bool restoreRTCFromBackup() {
+  preferences.begin("system", true);
+  unsigned long backup = preferences.getULong("rtclast", 0);
+  preferences.end();
+  if (backup < 1700000000UL) return false;
+  rtc.adjust(DateTime(backup));
+  Serial.printf("RTC restored from backup epoch: %lu\n", backup);
+  return true;
 }
 
 bool isRTCValid(const DateTime& dt) {
@@ -682,6 +722,38 @@ void handleLedConfig() {
   ring.setBrightness(ledBrightness);
   Serial.printf("LED mode set to: %s\n", ledModeToString(currentLedMode).c_str());
   server.send(200, "text/plain", "OK");
+}
+
+void handleSetTime() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "text/plain", "No JSON");
+    return;
+  }
+
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, server.arg("plain"));
+  if (err || !doc.containsKey("epochMs")) {
+    server.send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  unsigned long long epochMs = doc["epochMs"].as<unsigned long long>();
+  if (epochMs < 1000000000000ULL) {
+    server.send(400, "text/plain", "Invalid epoch");
+    return;
+  }
+
+  long tzOffsetMin = doc["tzOffsetMin"] | 0; // JS Date.getTimezoneOffset(): UTC - local
+  rtcTimeOffsetSec = -tzOffsetMin * 60L;     // Convert to local offset: local - UTC
+  saveRtcOffset(rtcTimeOffsetSec);
+  timeClient.setTimeOffset(rtcTimeOffsetSec);
+
+  unsigned long epochSecUtc = (unsigned long)(epochMs / 1000ULL);
+  unsigned long epochSecLocal = (unsigned long)((long)epochSecUtc + rtcTimeOffsetSec);
+  rtc.adjust(DateTime(epochSecLocal));
+  persistRTCBackup(epochSecLocal);
+  server.send(200, "text/plain", "OK");
+  Serial.printf("RTC set from client UTC=%lu offset=%lds\n", epochSecUtc, rtcTimeOffsetSec);
 }
 
 void loadRoutinesCache() {
@@ -1319,6 +1391,11 @@ void setup() {
 
   // 4. STORAGE & SENSORS (Swirl after each block to prevent freezing)
   if (!storage.begin()) Serial.println("Storage Fail");
+  loadRtcOffset();
+  if (WiFi.status() == WL_CONNECTED) {
+    timeClient.begin();
+    timeClient.setTimeOffset(rtcTimeOffsetSec);
+  }
   bootSwirl(sf++);
 
   // Inside setup()
@@ -1365,6 +1442,8 @@ void setup() {
   // 6. SECONDARY NETWORK CONFIG
   if (bootMode == MODE_AP) {
     WiFi.softAP("ESP32-Watering", "watering123");
+    dnsServer.start(53, "*", WiFi.softAPIP());
+    Serial.println("AP DNS server started");
   } else if (bootMode == MODE_MQTT) {
     mqtt.setServer(mqtt_server, 1883);
     mqtt.setCallback(mqttCallback);
@@ -1413,6 +1492,7 @@ void setup() {
   server.on("/storage/info", handleStorageInfo);
   server.on("/led/status", handleLedStatus);
   server.on("/led/config", HTTP_POST, handleLedConfig);
+  server.on("/time/set", HTTP_POST, handleSetTime);
   bootSwirl(sf++);
 
   // 8. SYSTEM READY
@@ -1430,6 +1510,9 @@ void setup() {
 void loop()
 {
   unsigned long now = millis();
+  if (bootMode == MODE_AP) {
+    dnsServer.processNextRequest();
+  }
   server.handleClient();
 
   // Handle MQTT connectivity if in MQTT mode

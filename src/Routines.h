@@ -355,6 +355,12 @@ private:
 
 class AutomationExecutor {
 public:
+  AutomationExecutor() {
+    for (int i = 0; i < MAX_AUTOMATIONS; i++) {
+      autoIds[i] = 0;
+      lastWhatsAppMs[i] = 0;
+    }
+  }
   
   // Check all automations and execute actions if triggered
   void checkAutomations(String automationsJSON, int* moistureLevels, int waterLevel,
@@ -392,12 +398,30 @@ public:
       }
       
       // Execute DO action
-      executeAction(auto_obj["do"], auto_obj["name"], 
+      unsigned long long autoId = auto_obj["id"] | 0;
+      executeAction(auto_obj["do"], auto_obj["name"], autoId,
                    pumpCallback, whatsappCallback, ledModeCallback);
     }
   }
 
 private:
+  unsigned long long autoIds[MAX_AUTOMATIONS];
+  unsigned long lastWhatsAppMs[MAX_AUTOMATIONS];
+
+  int getAutoSlot(unsigned long long id) {
+    for (int i = 0; i < MAX_AUTOMATIONS; i++) {
+      if (autoIds[i] == id) return i;
+    }
+    for (int i = 0; i < MAX_AUTOMATIONS; i++) {
+      if (autoIds[i] == 0) {
+        autoIds[i] = id;
+        lastWhatsAppMs[i] = 0;
+        return i;
+      }
+    }
+    return -1;
+  }
+
   bool checkWhenCondition(JsonObject when, int* moisture, int water, bool* pumps, bool lidOff) {
     String type = when["type"] | "";
     
@@ -478,7 +502,7 @@ private:
     return true; // No condition = always pass
   }
 
-  void executeAction(JsonObject doAction, String autoName,
+  void executeAction(JsonObject doAction, String autoName, unsigned long long autoId,
                     void (*pumpCallback)(int, int),
                     void (*whatsappCallback)(String),
                     void (*ledModeCallback)(String)) {
@@ -486,8 +510,18 @@ private:
     
     if (type == "whatsapp") {
       String message = doAction["message"] | "";
-      Serial.printf("AUTOMATION: %s -> WhatsApp: %s\n", autoName.c_str(), message.c_str());
-      if (whatsappCallback) whatsappCallback(message);
+      int repeatHours = doAction["repeatHours"] | 0;
+      int slot = getAutoSlot(autoId);
+      bool sendNow = true;
+      if (repeatHours > 0 && slot >= 0) {
+        unsigned long cooldownMs = (unsigned long)repeatHours * 3600000UL;
+        if (millis() - lastWhatsAppMs[slot] < cooldownMs) sendNow = false;
+      }
+      if (sendNow) {
+        Serial.printf("AUTOMATION: %s -> WhatsApp: %s\n", autoName.c_str(), message.c_str());
+        if (whatsappCallback) whatsappCallback(message);
+        if (slot >= 0) lastWhatsAppMs[slot] = millis();
+      }
     }
     else if (type == "pump_on") {
       int pump = doAction["pump"] | 1;

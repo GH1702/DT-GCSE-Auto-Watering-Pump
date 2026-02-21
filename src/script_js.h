@@ -393,14 +393,17 @@ function openNotifModal(id = null) {
   document.getElementById('notif-message').value = "";
   document.getElementById('notif-if-lid-mins').value = "10";
   document.getElementById('notif-led-mode').value = "normal";
+  document.getElementById('notif-repeat-hours').value = "0";
   
   document.getElementById('when-options').classList.add('hidden');
   document.getElementById('when-sensor-group').classList.add('hidden');
+  document.getElementById('when-water-group').classList.add('hidden');
   document.getElementById('when-pump-group').classList.add('hidden');
   document.getElementById('when-time-group').classList.add('hidden');
   
   document.getElementById('if-options').classList.add('hidden');
   document.getElementById('if-sensor-group').classList.add('hidden');
+  document.getElementById('if-water-group').classList.add('hidden');
   document.getElementById('if-time-group').classList.add('hidden');
   document.getElementById('if-lid-group').classList.add('hidden');
   
@@ -423,6 +426,7 @@ function openNotifModal(id = null) {
       if (a.when) {
         if (a.when.sensor) document.getElementById('notif-sensor').value = a.when.sensor;
         if (a.when.threshold) document.getElementById('notif-threshold').value = a.when.threshold;
+        if (a.when.threshold) document.getElementById('notif-water-threshold').value = a.when.threshold;
         if (a.when.pump) document.getElementById('notif-pump').value = a.when.pump;
         if (a.when.time) document.getElementById('notif-time').value = a.when.time;
       }
@@ -432,6 +436,7 @@ function openNotifModal(id = null) {
       if (a.if) {
         if (a.if.sensor) document.getElementById('notif-if-sensor').value = a.if.sensor;
         if (a.if.threshold) document.getElementById('notif-if-threshold').value = a.if.threshold;
+        if (a.if.threshold) document.getElementById('notif-if-water-threshold').value = a.if.threshold;
         if (a.if.timeFrom) document.getElementById('notif-if-time-from').value = a.if.timeFrom;
         if (a.if.timeTo) document.getElementById('notif-if-time-to').value = a.if.timeTo;
         if (a.if.minutes) document.getElementById('notif-if-lid-mins').value = a.if.minutes;
@@ -444,6 +449,7 @@ function openNotifModal(id = null) {
         if (a.do.pump) document.getElementById('notif-do-pump').value = a.do.pump;
         if (a.do.duration) document.getElementById('notif-pump-duration').value = a.do.duration;
         if (a.do.ledMode) document.getElementById('notif-led-mode').value = a.do.ledMode;
+        if (a.do.repeatHours != null) document.getElementById('notif-repeat-hours').value = a.do.repeatHours;
       }
     }
   }
@@ -460,18 +466,22 @@ function updateWhenOptions() {
   const when = document.getElementById('notif-when').value;
   const whenOptions = document.getElementById('when-options');
   const sensorGroup = document.getElementById('when-sensor-group');
+  const waterGroup = document.getElementById('when-water-group');
   const pumpGroup = document.getElementById('when-pump-group');
   const timeGroup = document.getElementById('when-time-group');
   
   sensorGroup.classList.add('hidden');
+  waterGroup.classList.add('hidden');
   pumpGroup.classList.add('hidden');
   timeGroup.classList.add('hidden');
   
   if(when) {
     whenOptions.classList.remove('hidden');
     
-    if(when.includes('moisture') || when.includes('water')) {
+    if(when.includes('moisture')) {
       sensorGroup.classList.remove('hidden');
+    } else if (when.includes('water')) {
+      waterGroup.classList.remove('hidden');
     } else if(when.includes('pump')) {
       pumpGroup.classList.remove('hidden');
     } else if(when === 'time') {
@@ -488,18 +498,22 @@ function updateIfOptions() {
   const ifCond = document.getElementById('notif-if').value;
   const ifOptions = document.getElementById('if-options');
   const sensorGroup = document.getElementById('if-sensor-group');
+  const waterGroup = document.getElementById('if-water-group');
   const timeGroup = document.getElementById('if-time-group');
   const lidGroup = document.getElementById('if-lid-group');
   
   sensorGroup.classList.add('hidden');
+  waterGroup.classList.add('hidden');
   timeGroup.classList.add('hidden');
   lidGroup.classList.add('hidden');
   
   if(ifCond) {
     ifOptions.classList.remove('hidden');
     
-    if(ifCond.includes('moisture') || ifCond.includes('water')) {
+    if(ifCond.includes('moisture')) {
       sensorGroup.classList.remove('hidden');
+    } else if(ifCond.includes('water')) {
+      waterGroup.classList.remove('hidden');
     } else if(ifCond === 'time_between') {
       timeGroup.classList.remove('hidden');
     } else if(ifCond === 'lid_off_for') {
@@ -585,15 +599,15 @@ function saveNotification() {
     name: name,
     when: {
       type: when,
-      sensor: document.getElementById('notif-sensor') ? document.getElementById('notif-sensor').value : null,
-      threshold: document.getElementById('notif-threshold') ? document.getElementById('notif-threshold').value : null,
+      sensor: when.includes('moisture') ? document.getElementById('notif-sensor').value : null,
+      threshold: when.includes('water') ? document.getElementById('notif-water-threshold').value : document.getElementById('notif-threshold').value,
       pump: document.getElementById('notif-pump') ? document.getElementById('notif-pump').value : null,
       time: document.getElementById('notif-time') ? document.getElementById('notif-time').value : null
     },
     if: ifCond ? {
       type: ifCond,
-      sensor: document.getElementById('notif-if-sensor') ? document.getElementById('notif-if-sensor').value : null,
-      threshold: document.getElementById('notif-if-threshold') ? document.getElementById('notif-if-threshold').value : null,
+      sensor: ifCond.includes('moisture') ? document.getElementById('notif-if-sensor').value : null,
+      threshold: ifCond.includes('water') ? document.getElementById('notif-if-water-threshold').value : document.getElementById('notif-if-threshold').value,
       timeFrom: document.getElementById('notif-if-time-from') ? document.getElementById('notif-if-time-from').value : null,
       timeTo: document.getElementById('notif-if-time-to') ? document.getElementById('notif-if-time-to').value : null,
       minutes: document.getElementById('notif-if-lid-mins') ? document.getElementById('notif-if-lid-mins').value : null
@@ -601,6 +615,7 @@ function saveNotification() {
     do: {
       type: doAction,
       message: document.getElementById('notif-message') ? document.getElementById('notif-message').value : null,
+      repeatHours: document.getElementById('notif-repeat-hours') ? document.getElementById('notif-repeat-hours').value : 0,
       pump: document.getElementById('notif-do-pump') ? document.getElementById('notif-do-pump').value : null,
       duration: document.getElementById('notif-pump-duration') ? document.getElementById('notif-pump-duration').value : null,
       ledMode: document.getElementById('notif-led-mode') ? document.getElementById('notif-led-mode').value : null
@@ -637,7 +652,7 @@ function getReadableCondition(type, data) {
 
 function getReadableAction(type, data) {
   const actions = {
-    'whatsapp': 'Send WhatsApp: "' + data.message + '"',
+    'whatsapp': 'Send WhatsApp: "' + data.message + '"' + ((data.repeatHours && Number(data.repeatHours) > 0) ? (' every ' + data.repeatHours + 'h') : ''),
     'pump_on': 'Turn pump ' + data.pump + ' ON for ' + data.duration + 's',
     'pump_off': 'Turn pump ' + data.pump + ' OFF',
     'led_mode': 'Set LED mode to ' + data.ledMode
@@ -825,6 +840,15 @@ function showSaveToast(message) {
   setTimeout(() => toast.classList.remove('show'), 1600);
 }
 
+function syncTimeFromDevice() {
+  const tzOffsetMin = new Date().getTimezoneOffset();
+  fetch('/time/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({epochMs: Date.now(), tzOffsetMin: tzOffsetMin})
+  }).catch(() => {});
+}
+
 function setRunInputMode(mode) {
   runInputMode = mode;
   const header = document.getElementById('run-mode-header');
@@ -905,6 +929,7 @@ window.addEventListener("DOMContentLoaded", function() {
   loadRoutinesFromESP();
   loadAutomationsFromESP();
   loadLedStatus();
+  syncTimeFromDevice();
 
   document.querySelectorAll('input[name="led-mode"]').forEach(el => {
     el.addEventListener('change', toggleLedControlCards);
