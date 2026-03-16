@@ -7,8 +7,10 @@
 #include <WiFiUdp.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <DNSServer.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include "index_html.h"
 #include "style_css.h"
 #include "script_js.h"
@@ -45,11 +47,22 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // ---------- LED Config----------
 Adafruit_NeoPixel ring(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-enum LedMode { LED_WAVE, LED_SOLID, LED_SMART };
+enum LedMode { LED_OFF, LED_WAVE, LED_STATIC, LED_MOVING, LED_SMART, LED_BREATHING, LED_RAINBOW };
 LedMode currentLedMode = LED_WAVE;   // 🌊 DEFAULT MODE
 float waveOffset = 0.0;
 float waveSpeed = 0.08;
 float waveLength = 20.0;
+float rainbowOffset = 0.0f;
+float rainbowSpeed = 1.0f;
+float movingOffset = 0.0f;
+float movingSpeed = 0.35f;
+float breathingPhase = 0.0f;
+uint32_t staticColor = 0;
+uint32_t breathingColor = 0;
+uint32_t movingColors[5] = {0, 0, 0, 0, 0};
+uint32_t smartBandColors[5] = {0, 0, 0, 0, 0};
+int movingColorCount = 5;
+int ledBrightness = 255;
 
 // ---------- Objects ----------
 WiFiUDP ntpUDP;
@@ -57,6 +70,7 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 WebServer server(80);
+DNSServer dnsServer;
 Preferences preferences;
 
 
@@ -100,6 +114,11 @@ long waterLevelCM = -1;
 
 int pumpTimeoutS = 10;
 bool manualOverride = false;
+unsigned long lastWhatsAppSentMs = 0;
+unsigned long lidOffStartMs = 0;
+float pumpMlPerSec[4] = {21.5f, 21.5f, 21.5f, 21.5f};
+long rtcTimeOffsetSec = 0;
+unsigned long lastRtcPersistMs = 0;
 
 // ============================================================
 // =================== FORWARD DECLARATIONS ===================
@@ -107,8 +126,28 @@ bool manualOverride = false;
 void sendWhatsAppMessage(String message);
 void pumpActionCallback(int pump, int duration);
 void whatsappActionCallback(String message);
+void ledModeActionCallback(String mode);
 void activatePump(int idx, int seconds);  // NO DEFAULT HERE
 void stopPump(int idx);
+void handleLedStatus();
+void handleLedConfig();
+void handleSetTime();
+void loadLedSettings();
+void saveLedSettings();
+void drawLedOff();
+void drawLedStatic();
+void drawLedMoving();
+void drawLedSmartLevel();
+void drawLedBreathing();
+void drawLedRainbow();
+uint32_t parseHexColor(String hex);
+String colorToHex(uint32_t color);
+String urlEncode(const String& src);
+int secondsForMl(int pumpIdx, float mlAmount);
+void loadRtcOffset();
+void saveRtcOffset(long offsetSec);
+bool restoreRTCFromBackup();
+void persistRTCBackup(unsigned long epochLocal);
 
 // ============================================================
 // ====================== UTILITIES ===========================
@@ -197,13 +236,72 @@ String getCurrentTimeString() {
 }
 
 void syncRTCFromWiFi() {
-  timeClient.update();
+  timeClient.setTimeOffset(rtcTimeOffsetSec);
+  if (!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
   unsigned long epochTime = timeClient.getEpochTime();
+  if (epochTime < 1000000000UL) {
+    Serial.println("NTP invalid epoch, skipping RTC sync");
+    return;
+  }
   
   // Convert epoch to DateTime and save to RTC hardware
   rtc.adjust(DateTime(epochTime)); 
+  persistRTCBackup(epochTime);
   
   Serial.println("RTC Hardware Synced with NTP");
+}
+
+void loadRtcOffset() {
+  preferences.begin("system", true);
+  rtcTimeOffsetSec = preferences.getLong("tzofs", 0);
+  preferences.end();
+}
+
+void saveRtcOffset(long offsetSec) {
+  preferences.begin("system", false);
+  preferences.putLong("tzofs", offsetSec);
+  preferences.end();
+}
+
+void persistRTCBackup(unsigned long epochLocal) {
+  if (epochLocal < 1700000000UL) return;
+  preferences.begin("system", false);
+  preferences.putULong("rtclast", epochLocal);
+  preferences.end();
+}
+
+bool restoreRTCFromBackup() {
+  preferences.begin("system", true);
+  unsigned long backup = preferences.getULong("rtclast", 0);
+  preferences.end();
+  if (backup < 1700000000UL) return false;
+  rtc.adjust(DateTime(backup));
+  Serial.printf("RTC restored from backup epoch: %lu\n", backup);
+  return true;
+}
+
+bool isRTCValid(const DateTime& dt) {
+  if (dt.year() < 2024 || dt.year() > 2100) return false;
+  if (dt.month() < 1 || dt.month() > 12) return false;
+  if (dt.day() < 1 || dt.day() > 31) return false;
+  if (dt.hour() > 23 || dt.minute() > 59 || dt.second() > 59) return false;
+  return true;
+}
+
+DateTime getRTCNowSafe() {
+  DateTime now = rtc.now();
+  if (isRTCValid(now)) return now;
+
+  Serial.println("RTC invalid reading, trying NTP resync...");
+  if (WiFi.status() == WL_CONNECTED) {
+    syncRTCFromWiFi();
+    now = rtc.now();
+  }
+  if (isRTCValid(now)) return now;
+
+  return DateTime(2026, 1, 1, 0, 0, 0);
 }
 
 int getTankPercent() {
@@ -217,6 +315,75 @@ int getTankPercent() {
 
   percent = constrain(percent, 0, 100);
   return (int)percent;
+}
+
+uint32_t parseHexColor(String hex) {
+  hex.trim();
+  if (hex.length() == 0) return ring.Color(0, 0, 0);
+  if (hex.charAt(0) == '#') hex = hex.substring(1);
+  if (hex.length() != 6) return ring.Color(0, 0, 0);
+
+  long value = strtol(hex.c_str(), nullptr, 16);
+  uint8_t r = (value >> 16) & 0xFF;
+  uint8_t g = (value >> 8) & 0xFF;
+  uint8_t b = value & 0xFF;
+  return ring.Color(r, g, b);
+}
+
+String colorToHex(uint32_t color) {
+  uint8_t r = (color >> 16) & 0xFF;
+  uint8_t g = (color >> 8) & 0xFF;
+  uint8_t b = color & 0xFF;
+  char out[8];
+  sprintf(out, "#%02X%02X%02X", r, g, b);
+  return String(out);
+}
+
+uint32_t lerpColor(uint32_t a, uint32_t b, float t) {
+  t = constrain(t, 0.0f, 1.0f);
+  uint8_t ar = (a >> 16) & 0xFF;
+  uint8_t ag = (a >> 8) & 0xFF;
+  uint8_t ab = a & 0xFF;
+  uint8_t br = (b >> 16) & 0xFF;
+  uint8_t bg = (b >> 8) & 0xFF;
+  uint8_t bb = b & 0xFF;
+
+  uint8_t rr = (uint8_t)(ar + (br - ar) * t);
+  uint8_t rg = (uint8_t)(ag + (bg - ag) * t);
+  uint8_t rb = (uint8_t)(ab + (bb - ab) * t);
+  return ring.Color(rr, rg, rb);
+}
+
+String urlEncode(const String& src) {
+  const char* hex = "0123456789ABCDEF";
+  String out;
+  out.reserve(src.length() * 3);
+  for (size_t i = 0; i < src.length(); i++) {
+    unsigned char c = (unsigned char)src.charAt(i);
+    if ((c >= 'a' && c <= 'z') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.' || c == '~') {
+      out += (char)c;
+    } else if (c == ' ') {
+      out += '+';
+    } else {
+      out += '%';
+      out += hex[(c >> 4) & 0x0F];
+      out += hex[c & 0x0F];
+    }
+  }
+  return out;
+}
+
+int secondsForMl(int pumpIdx, float mlAmount) {
+  if (pumpIdx < 0 || pumpIdx >= 4) return 0;
+  float rate = pumpMlPerSec[pumpIdx];
+  if (rate <= 0.01f) rate = 21.5f;
+  if (mlAmount <= 0.0f) return 0;
+  float seconds = mlAmount / rate;
+  int roundedUp = (int)ceil(seconds);
+  return max(1, roundedUp);
 }
 
 
@@ -309,13 +476,14 @@ void handleRunRoutine() {
     JsonArray arr = doc.as<JsonArray>();
     
     for (JsonObject r : arr) {
-      if (String(r["id"].as<long>()) == routineId) {
+      String itemId = r["id"].is<const char*>() ? r["id"].as<String>() : String((long long)r["id"].as<long long>());
+      if (itemId == routineId) {
         int pump = r["p"] | 0;
         int duration = 10;
         
         if (r["mode"] == "static") {
           int amount = r["val"] | 100;
-          duration = amount / 10;
+          duration = secondsForMl(pump - 1, (float)amount);
         } else {
           duration = 10;
         }
@@ -342,7 +510,8 @@ void handleRunAutomation() {
     JsonArray arr = doc.as<JsonArray>();
     
     for (JsonObject a : arr) {
-      if (String(a["id"].as<long>()) == autoId) {
+      String itemId = a["id"].is<const char*>() ? a["id"].as<String>() : String((long long)a["id"].as<long long>());
+      if (itemId == autoId) {
         JsonObject doAction = a["do"];
         String type = doAction["type"] | "";
         
@@ -358,6 +527,10 @@ void handleRunAutomation() {
         else if (type == "pump_off") {
           int pump = doAction["pump"] | 1;
           stopPump(pump - 1);
+        }
+        else if (type == "led_mode") {
+          String ledMode = doAction["ledMode"] | "normal";
+          ledModeActionCallback(ledMode);
         }
         
         server.send(200, "text/plain", "Automation executed");
@@ -378,6 +551,209 @@ void handleStorageInfo() {
   json += "\"free\":" + String(SPIFFS.totalBytes() - SPIFFS.usedBytes());
   json += "}";
   server.send(200, "application/json", json);
+}
+
+String ledModeToString(LedMode mode) {
+  switch (mode) {
+    case LED_OFF: return "off";
+    case LED_WAVE: return "normal";
+    case LED_STATIC: return "static";
+    case LED_MOVING: return "moving";
+    case LED_SMART: return "smart";
+    case LED_BREATHING: return "breathing";
+    case LED_RAINBOW: return "rgb";
+    default: return "normal";
+  }
+}
+
+void loadLedSettings() {
+  preferences.begin("ledcfg", true);
+
+  int savedMode = preferences.getInt("mode", (int)LED_WAVE);
+  if (savedMode < (int)LED_OFF || savedMode > (int)LED_RAINBOW) savedMode = (int)LED_WAVE;
+  currentLedMode = (LedMode)savedMode;
+
+  movingSpeed = preferences.getFloat("speed", movingSpeed);
+  movingSpeed = constrain(movingSpeed, 0.05f, 3.0f);
+  rainbowSpeed = preferences.getFloat("rgbspd", rainbowSpeed);
+  rainbowSpeed = constrain(rainbowSpeed, 0.05f, 5.0f);
+  ledBrightness = preferences.getInt("bright", ledBrightness);
+  ledBrightness = constrain(ledBrightness, 5, 255);
+
+  staticColor = preferences.getUInt("static", staticColor);
+  breathingColor = preferences.getUInt("breath", breathingColor);
+  movingColorCount = preferences.getInt("mcount", movingColorCount);
+  movingColorCount = constrain(movingColorCount, 2, 5);
+
+  for (int i = 0; i < 5; i++) {
+    String mKey = "m" + String(i);
+    String sKey = "s" + String(i);
+    movingColors[i] = preferences.getUInt(mKey.c_str(), movingColors[i]);
+    smartBandColors[i] = preferences.getUInt(sKey.c_str(), smartBandColors[i]);
+  }
+
+  preferences.end();
+}
+
+void saveLedSettings() {
+  preferences.begin("ledcfg", false);
+  preferences.putInt("mode", (int)currentLedMode);
+  preferences.putFloat("speed", movingSpeed);
+  preferences.putFloat("rgbspd", rainbowSpeed);
+  preferences.putInt("bright", ledBrightness);
+  preferences.putUInt("static", staticColor);
+  preferences.putUInt("breath", breathingColor);
+  preferences.putInt("mcount", movingColorCount);
+
+  for (int i = 0; i < 5; i++) {
+    String mKey = "m" + String(i);
+    String sKey = "s" + String(i);
+    preferences.putUInt(mKey.c_str(), movingColors[i]);
+    preferences.putUInt(sKey.c_str(), smartBandColors[i]);
+  }
+  preferences.end();
+}
+
+void setLedModeFromString(String mode) {
+  mode.toLowerCase();
+  if (mode == "off") currentLedMode = LED_OFF;
+  else if (mode == "normal") currentLedMode = LED_WAVE;
+  else if (mode == "static") currentLedMode = LED_STATIC;
+  else if (mode == "moving") currentLedMode = LED_MOVING;
+  else if (mode == "smart") currentLedMode = LED_SMART;
+  else if (mode == "breathing") currentLedMode = LED_BREATHING;
+  else if (mode == "rgb") currentLedMode = LED_RAINBOW;
+}
+
+void handleLedStatus() {
+  String json = "{";
+  json += "\"mode\":\"" + ledModeToString(currentLedMode) + "\",";
+  json += "\"speed\":" + String(movingSpeed, 2) + ",";
+  json += "\"rgbSpeed\":" + String(rainbowSpeed, 2) + ",";
+  json += "\"brightness\":" + String(ledBrightness) + ",";
+  json += "\"water\":" + String(waterLevelPercent) + ",";
+  json += "\"static\":\"" + colorToHex(staticColor) + "\",";
+  json += "\"breathing\":\"" + colorToHex(breathingColor) + "\",";
+
+  json += "\"moving\":[";
+  for (int i = 0; i < 5; i++) {
+    json += "\"" + colorToHex(movingColors[i]) + "\"";
+    if (i < 4) json += ",";
+  }
+  json += "],";
+
+  json += "\"smart\":[";
+  for (int i = 0; i < 5; i++) {
+    json += "\"" + colorToHex(smartBandColors[i]) + "\"";
+    if (i < 4) json += ",";
+  }
+  json += "]";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void handleLedConfig() {
+  StaticJsonDocument<2048> doc;
+  bool gotConfig = false;
+
+  if (server.hasArg("plain")) {
+    DeserializationError err = deserializeJson(doc, server.arg("plain"));
+    if (!err) gotConfig = true;
+  }
+
+  if (!gotConfig && server.hasArg("mode")) {
+    setLedModeFromString(server.arg("mode"));
+    gotConfig = true;
+  }
+
+  if (gotConfig && doc.containsKey("mode")) {
+    setLedModeFromString(doc["mode"].as<String>());
+  }
+
+  if (gotConfig && doc.containsKey("speed")) {
+    movingSpeed = constrain(doc["speed"].as<float>(), 0.05f, 3.0f);
+  } else if (!gotConfig && server.hasArg("speed")) {
+    movingSpeed = constrain(server.arg("speed").toFloat(), 0.05f, 3.0f);
+    gotConfig = true;
+  }
+
+  if (gotConfig && doc.containsKey("rgbSpeed")) {
+    rainbowSpeed = constrain(doc["rgbSpeed"].as<float>(), 0.05f, 5.0f);
+  }
+
+  if (gotConfig && doc.containsKey("brightness")) {
+    ledBrightness = constrain(doc["brightness"].as<int>(), 5, 255);
+  }
+
+  if (gotConfig && doc.containsKey("static")) {
+    staticColor = parseHexColor(doc["static"].as<String>());
+  }
+
+  if (gotConfig && doc.containsKey("breathing")) {
+    breathingColor = parseHexColor(doc["breathing"].as<String>());
+  }
+
+  if (gotConfig && doc.containsKey("moving")) {
+    JsonArray arr = doc["moving"].as<JsonArray>();
+    int idx = 0;
+    for (JsonVariant v : arr) {
+      if (idx >= 5) break;
+      movingColors[idx++] = parseHexColor(v.as<String>());
+    }
+    movingColorCount = max(2, idx);
+  }
+
+  if (gotConfig && doc.containsKey("smart")) {
+    JsonArray arr = doc["smart"].as<JsonArray>();
+    int idx = 0;
+    for (JsonVariant v : arr) {
+      if (idx >= 5) break;
+      smartBandColors[idx++] = parseHexColor(v.as<String>());
+    }
+  }
+
+  if (!gotConfig) {
+    server.send(400, "text/plain", "Invalid LED config");
+    return;
+  }
+
+  saveLedSettings();
+  ring.setBrightness(ledBrightness);
+  Serial.printf("LED mode set to: %s\n", ledModeToString(currentLedMode).c_str());
+  server.send(200, "text/plain", "OK");
+}
+
+void handleSetTime() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "text/plain", "No JSON");
+    return;
+  }
+
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, server.arg("plain"));
+  if (err || !doc.containsKey("epochMs")) {
+    server.send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  unsigned long long epochMs = doc["epochMs"].as<unsigned long long>();
+  if (epochMs < 1000000000000ULL) {
+    server.send(400, "text/plain", "Invalid epoch");
+    return;
+  }
+
+  long tzOffsetMin = doc["tzOffsetMin"] | 0; // JS Date.getTimezoneOffset(): UTC - local
+  rtcTimeOffsetSec = -tzOffsetMin * 60L;     // Convert to local offset: local - UTC
+  saveRtcOffset(rtcTimeOffsetSec);
+  timeClient.setTimeOffset(rtcTimeOffsetSec);
+
+  unsigned long epochSecUtc = (unsigned long)(epochMs / 1000ULL);
+  unsigned long epochSecLocal = (unsigned long)((long)epochSecUtc + rtcTimeOffsetSec);
+  rtc.adjust(DateTime(epochSecLocal));
+  persistRTCBackup(epochSecLocal);
+  server.send(200, "text/plain", "OK");
+  Serial.printf("RTC set from client UTC=%lu offset=%lds\n", epochSecUtc, rtcTimeOffsetSec);
 }
 
 void loadRoutinesCache() {
@@ -485,6 +861,71 @@ void drawWave()
   if (waveOffset >= waveLength) waveOffset -= waveLength;
 }
 
+void drawLedOff() {
+  ring.clear();
+  ring.show();
+}
+
+void drawLedStatic() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    ring.setPixelColor(i, staticColor);
+  }
+  ring.show();
+}
+
+void drawLedMoving() {
+  int count = constrain(movingColorCount, 2, 5);
+  float pixelsPerColor = (float)NUM_LEDS / (float)count;
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    float pos = fmod((float)i + movingOffset, (float)NUM_LEDS);
+    float colorPos = pos / pixelsPerColor;
+    int idxA = (int)floor(colorPos) % count;
+    int idxB = (idxA + 1) % count;
+    float blend = colorPos - floor(colorPos);
+    ring.setPixelColor(i, lerpColor(movingColors[idxA], movingColors[idxB], blend));
+  }
+  ring.show();
+
+  movingOffset += movingSpeed;
+  if (movingOffset >= NUM_LEDS) movingOffset -= NUM_LEDS;
+}
+
+void drawLedSmartLevel() {
+  int pct = constrain(waterLevelPercent, 0, 100);
+  int band = pct / 20;
+  if (band > 4) band = 4;
+  uint32_t bandColor = smartBandColors[band];
+  for (int i = 0; i < NUM_LEDS; i++) {
+    ring.setPixelColor(i, bandColor);
+  }
+  ring.show();
+}
+
+void drawLedBreathing() {
+  float breath = (sin(breathingPhase) * 0.5f) + 0.5f;
+  float brightness = 0.15f + (0.85f * breath);
+  uint8_t r = (uint8_t)(((breathingColor >> 16) & 0xFF) * brightness);
+  uint8_t g = (uint8_t)(((breathingColor >> 8) & 0xFF) * brightness);
+  uint8_t b = (uint8_t)((breathingColor & 0xFF) * brightness);
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    ring.setPixelColor(i, ring.Color(r, g, b));
+  }
+  ring.show();
+  breathingPhase += 0.08f;
+}
+
+void drawLedRainbow() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    uint16_t hue = (uint16_t)((i * 65535UL / NUM_LEDS) + (uint16_t)(rainbowOffset * 256)) & 0xFFFF;
+    ring.setPixelColor(i, ring.gamma32(ring.ColorHSV(hue, 255, 255)));
+  }
+  ring.show();
+  rainbowOffset += rainbowSpeed;
+  if (rainbowOffset >= 255.0f) rainbowOffset = 0.0f;
+}
+
 void drawBreathingRed() {
   static float breathValue = 0;
   static bool breathingUp = true;
@@ -530,6 +971,10 @@ void sendWhatsAppMessage(String message) {
     Serial.println("WiFi not connected - cannot send WhatsApp");
     return;
   }
+  if (millis() - lastWhatsAppSentMs < 30000UL) {
+    Serial.println("WhatsApp throttled (30s cooldown)");
+    return;
+  }
   
   message.replace("{tank}", String(waterLevelPercent) + "%");
   for (int i = 0; i < 4; i++) {
@@ -538,49 +983,27 @@ void sendWhatsAppMessage(String message) {
     message.replace("{pump}", String(i + 1));
   }
   
-  String encodedMsg = "";
-  for (unsigned int i = 0; i < message.length(); i++) {
-    char c = message.charAt(i);
-    if (c == ' ') encodedMsg += '+';
-    else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') encodedMsg += c;
-    else {
-      encodedMsg += '%';
-      if (c < 16) encodedMsg += '0';
-      encodedMsg += String(c, HEX);
-    }
-  }
-  
-  String url = "http://api.callmebot.com/whatsapp.php?";
-  url += "phone=+447902664891";
-  url += "&text=" + encodedMsg;
-  url += "&apikey=4458318";
-  
+  String url = "http://api.callmebot.com/whatsapp.php?phone=%2B447902664891&text=" + urlEncode(message) + "&apikey=4458318";
   Serial.println("Sending WhatsApp: " + message);
-  
-  WiFiClient client;
-  if (client.connect("api.callmebot.com", 80)) {
-    client.print(String("GET ") + url.substring(30) + " HTTP/1.1\r\n" +
-                 "Host: api.callmebot.com\r\n" +
-                 "Connection: close\r\n\r\n");
-    
-    unsigned long timeout = millis();
-    while (client.available() == 0) {
-      if (millis() - timeout > 5000) {
-        Serial.println("WhatsApp request timeout");
-        client.stop();
-        return;
-      }
-    }
-    
-    while (client.available()) {
-      String line = client.readStringUntil('\r');
-      Serial.print(line);
-    }
-    
-    client.stop();
-    Serial.println("\nWhatsApp message sent successfully");
+
+  HTTPClient http;
+  http.setTimeout(10000);
+  if (!http.begin(url)) {
+    Serial.println("WhatsApp request init failed");
+    return;
+  }
+
+  int code = http.GET();
+  String body = http.getString();
+  Serial.printf("WhatsApp HTTP %d\n", code);
+  Serial.println(body);
+  http.end();
+
+  if (code >= 200 && code < 300) {
+    lastWhatsAppSentMs = millis();
+    Serial.println("WhatsApp message sent successfully");
   } else {
-    Serial.println("Failed to connect to callmebot API");
+    Serial.println("WhatsApp API error");
   }
 }
 
@@ -594,6 +1017,11 @@ void pumpActionCallback(int pump, int duration) {
 
 void whatsappActionCallback(String message) {
   sendWhatsAppMessage(message);
+}
+
+void ledModeActionCallback(String mode) {
+  setLedModeFromString(mode);
+  saveLedSettings();
 }
 
 // ============================================================
@@ -628,21 +1056,42 @@ void handleStatus() {
   
   float tempC = readTemperatureC();   // read temperature
   long waterRaw = readWaterDistanceCM();
+  DateTime nowRTC = getRTCNowSafe();
+  const char* dayNames[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  char rtcTimeBuf[6];
+  sprintf(rtcTimeBuf, "%02d:%02d", nowRTC.hour(), nowRTC.minute());
 
   String json = "{";
+  String modeStr = "WIFI";
+  if (bootMode == MODE_AP) modeStr = "AP";
+  else if (bootMode == MODE_MQTT) modeStr = "MQTT";
+  json += "\"mode\":\"" + modeStr + "\",";
+  json += "\"apMode\":" + String(bootMode == MODE_AP ? "true" : "false") + ",";
   json += "\"water\":" + String(waterLevelPercent) + ",";
   json += "\"waterRaw\":" + String(waterRaw) + ",";
+  json += "\"lidOff\":" + String((digitalRead(LID_PIN) == HIGH) ? "true" : "false") + ",";
+  json += "\"rtcTime\":\"" + String(rtcTimeBuf) + "\",";
+  json += "\"rtcDay\":\"" + String(dayNames[nowRTC.dayOfTheWeek() % 7]) + "\",";
   json += "\"temperature\":" + String(tempC, 1) + ",";  // 1 decimal place
   json += "\"m\":[" + String(moisturePercent[0]) + "," + String(moisturePercent[1]) + "," 
                     + String(moisturePercent[2]) + "," + String(moisturePercent[3]) + "],";
   json += "\"raw\":[" + String(rawMoistureValues[0]) + "," + String(rawMoistureValues[1]) + "," 
-                      + String(rawMoistureValues[2]) + "," + String(rawMoistureValues[3]) + "]}";
+                      + String(rawMoistureValues[2]) + "," + String(rawMoistureValues[3]) + "],";
+  json += "\"pumps\":[" + String(pumpActive[0] ? 1 : 0) + "," + String(pumpActive[1] ? 1 : 0) + "," +
+                      String(pumpActive[2] ? 1 : 0) + "," + String(pumpActive[3] ? 1 : 0) + "],";
+  json += "\"override\":" + String(manualOverride ? "true" : "false") + ",";
+  json += "\"pumpMl\":[" + String(pumpMlPerSec[0], 3) + "," + String(pumpMlPerSec[1], 3) + "," +
+                       String(pumpMlPerSec[2], 3) + "," + String(pumpMlPerSec[3], 3) + "]}";
   
   server.send(200, "application/json", json);
 }
 
 
 void handlePump() {
+  bool apiMode = server.hasArg("api");
+  bool actionTaken = false;
+  String response = "OK";
+
   if (server.hasArg("p") && server.hasArg("t")) {
     int pIdx = server.arg("p").toInt() - 1;
     int duration = server.arg("t").toInt();
@@ -650,6 +1099,21 @@ void handlePump() {
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Timed Run P%d for %ds\n", pIdx + 1, duration);
       activatePump(pIdx, duration);
+      actionTaken = true;
+    }
+  }
+  else if (server.hasArg("p") && server.hasArg("ml")) {
+    int pIdx = server.arg("p").toInt() - 1;
+    float mlAmount = server.arg("ml").toFloat();
+    if (pIdx >= 0 && pIdx < 4) {
+      int duration = secondsForMl(pIdx, mlAmount);
+      if (duration > pumpTimeoutS && !manualOverride) {
+        response = "OVERRIDE_REQUIRED";
+      } else {
+        Serial.printf("WEB: ML Run P%d for %.1fml -> %ds\n", pIdx + 1, mlAmount, duration);
+        activatePump(pIdx, duration);
+        actionTaken = true;
+      }
     }
   } 
   else if (server.hasArg("on")) {
@@ -657,6 +1121,7 @@ void handlePump() {
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Manual ON P%d\n", pIdx + 1);
       activatePump(pIdx, 0);  // Use 0 to trigger default
+      actionTaken = true;
     }
   } 
   else if (server.hasArg("off")) {
@@ -664,11 +1129,17 @@ void handlePump() {
     if (pIdx >= 0 && pIdx < 4) {
       Serial.printf("WEB: Manual OFF P%d\n", pIdx + 1);
       stopPump(pIdx);
+      actionTaken = true;
     }
   }
 
-  server.sendHeader("Location", "/");
-  server.send(303);
+  if (apiMode) {
+    if (!actionTaken && response == "OK") response = "INVALID";
+    server.send(200, "text/plain", response);
+  } else {
+    server.sendHeader("Location", "/");
+    server.send(303);
+  }
 }
 
 void handleCalibrate() {
@@ -702,6 +1173,19 @@ void handleCalibrate() {
         dryMax[sensorIdx-1] = val;
         String key = "dry" + String(sensorIdx);
         preferences.putInt(key.c_str(), val);
+      }
+    }
+    else if (type == "pumpMl") {
+      if (sensorIdx > 0 && sensorIdx <= 4 && server.hasArg("ml")) {
+        float ml = server.arg("ml").toFloat();
+        float sec = server.hasArg("sec") ? server.arg("sec").toFloat() : 10.0f;
+        if (ml > 0.0f && sec > 0.1f) {
+          pumpMlPerSec[sensorIdx - 1] = ml / sec;
+          if (pumpMlPerSec[sensorIdx - 1] < 0.01f) pumpMlPerSec[sensorIdx - 1] = 0.01f;
+          String key = "pml" + String(sensorIdx);
+          preferences.putFloat(key.c_str(), pumpMlPerSec[sensorIdx - 1]);
+          Serial.printf("PUMP CAL: P%d = %.3f ml/s\n", sensorIdx, pumpMlPerSec[sensorIdx - 1]);
+        }
       }
     }
 
@@ -751,19 +1235,19 @@ void drawOLED() {
   // Water (Left)
   display.setCursor(0, 0);
   if (digitalRead(LID_PIN) == HIGH) {
-    display.print("W:  X"); // Spaced exactly like the "M:  X" text
+    display.print("Tank: X");
   } else {
-    display.print("W:");
+    display.print("Tank:");
     display.print(waterLevelPercent);
     display.print("%");
   }
 
   // Time (Centered)
-  DateTime rtcNow = rtc.now();
+  DateTime rtcNow = getRTCNowSafe();
   char timeBuffer[6];
   sprintf(timeBuffer, "%02d:%02d", rtcNow.hour(), rtcNow.minute());
   display.getTextBounds(timeBuffer, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((SCREEN_WIDTH / 2) - (w / 2), 0);
+  display.setCursor(((SCREEN_WIDTH / 2) - (w / 2)+5), 0);
   display.print(timeBuffer);
 
   // Temp (Right)
@@ -779,7 +1263,7 @@ void drawOLED() {
     int y = 16 + i * 12;
     display.setCursor(0, y);
     if (rawMoistureValues[i] < 900) {
-      display.printf("P%d: %-3s M%d:  X",
+      display.printf("P%d:%-3s M%d: X",
                      i + 1,
                      pumpActive[i] ? "ON" : "OFF",
                      i + 1);
@@ -814,7 +1298,7 @@ void drawOLED() {
     display.print("OFF");
   }
 
-  DateTime now = rtc.now();
+  DateTime now = getRTCNowSafe();
   Serial.printf("RTC Time: %02d:%02d:%02d\n", now.hour(), now.minute(), now.second());
   
   display.display();
@@ -827,6 +1311,19 @@ void setup() {
   // --- 1. IMMEDIATE HARDWARE START ---
   ring.begin();
   ring.setBrightness(150);
+  staticColor = ring.Color(0, 160, 255);
+  breathingColor = ring.Color(255, 60, 10);
+  movingColors[0] = ring.Color(255, 0, 0);
+  movingColors[1] = ring.Color(255, 128, 0);
+  movingColors[2] = ring.Color(255, 255, 0);
+  movingColors[3] = ring.Color(0, 180, 255);
+  movingColors[4] = ring.Color(160, 0, 255);
+  smartBandColors[0] = ring.Color(255, 0, 0);
+  smartBandColors[1] = ring.Color(255, 128, 0);
+  smartBandColors[2] = ring.Color(255, 255, 0);
+  smartBandColors[3] = ring.Color(0, 180, 0);
+  smartBandColors[4] = ring.Color(0, 120, 255);
+  loadLedSettings();
   
   Wire.begin(21, 22);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -886,22 +1383,33 @@ void setup() {
       bootSwirl(sf++);
       delay(50);
     }
+    if (WiFi.status() == WL_CONNECTED) {
+      timeClient.begin();
+    }
   }
   bootSwirl(sf++);
 
   // 4. STORAGE & SENSORS (Swirl after each block to prevent freezing)
   if (!storage.begin()) Serial.println("Storage Fail");
+  loadRtcOffset();
+  if (WiFi.status() == WL_CONNECTED) {
+    timeClient.begin();
+    timeClient.setTimeOffset(rtcTimeOffsetSec);
+  }
   bootSwirl(sf++);
 
   // Inside setup()
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
   } else {
-    // This is the "Magic" check:
-    if (rtc.lostPower()) {
-      Serial.println("RTC power failure! Setting to compile time...");
-      // This only runs if the battery was removed or died
-      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    DateTime bootNow = rtc.now();
+    bool rtcBad = rtc.lostPower() || !isRTCValid(bootNow);
+    if (rtcBad) {
+      Serial.println("RTC invalid/power-loss detected");
+      if (!restoreRTCFromBackup()) {
+        Serial.println("No RTC backup found, setting compile time");
+        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+      }
     }
     
     // If we are in a mode with WiFi, update the chip
@@ -919,6 +1427,13 @@ void setup() {
 
   // 5. CALIBRATION & PUMPS
   calibration.loadAll(wetMin, dryMax, waterMinCM, waterMaxCM, pumpTimeoutS);
+  preferences.begin("calib", true);
+  for (int i = 0; i < 4; i++) {
+    String key = "pml" + String(i + 1);
+    pumpMlPerSec[i] = preferences.getFloat(key.c_str(), 21.5f);
+    if (pumpMlPerSec[i] <= 0.01f) pumpMlPerSec[i] = 21.5f;
+  }
+  preferences.end();
   bootSwirl(sf++);
 
   for (int i=0; i<4; i++) { 
@@ -930,10 +1445,37 @@ void setup() {
   // 6. SECONDARY NETWORK CONFIG
   if (bootMode == MODE_AP) {
     WiFi.softAP("ESP32-Watering", "watering123");
+    dnsServer.start(53, "*", WiFi.softAPIP());
+    Serial.println("AP DNS server started");
   } else if (bootMode == MODE_MQTT) {
     mqtt.setServer(mqtt_server, 1883);
     mqtt.setCallback(mqttCallback);
-    timeClient.begin();
+  }
+
+  if (MDNS.begin("plant")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("mDNS started: plant.local");
+  } else {
+    Serial.println("mDNS failed to start");
+  }
+
+  if (bootMode == MODE_WIFI || bootMode == MODE_AP) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    if (bootMode == MODE_AP) {
+      display.println("AP Mode Ready");
+      display.print("IP: ");
+      display.println(WiFi.softAPIP().toString());
+      display.println("Host: plant.local");
+    } else {
+      display.println("WiFi Mode Ready");
+      display.print("IP: ");
+      display.println(WiFi.localIP().toString());
+    }
+    display.display();
+    delay(2000);
   }
   bootSwirl(sf++);
 
@@ -942,11 +1484,25 @@ void setup() {
   server.on("/status", handleStatus);
   server.on("/pump", handlePump);
   server.on("/calibrate", handleCalibrate);
-  server.on("/routines", handleGetRoutines);
-  server.on("/automations", handleGetAutomations);
+  server.on("/routines", HTTP_GET, handleGetRoutines);
+  server.on("/routines", HTTP_POST, handleSaveRoutines);
+  server.on("/automations", HTTP_GET, handleGetAutomations);
+  server.on("/automations", HTTP_POST, handleSaveAutomations);
   server.on("/routine/run", handleRunRoutine);
+  server.on("/routine/run", HTTP_POST, handleRunRoutine);
   server.on("/automation/run", handleRunAutomation);
+  server.on("/automation/run", HTTP_POST, handleRunAutomation);
   server.on("/storage/info", handleStorageInfo);
+  server.on("/led/status", handleLedStatus);
+  server.on("/led/config", HTTP_POST, handleLedConfig);
+  server.on("/time/set", HTTP_POST, handleSetTime);
+  server.onNotFound([]() {
+    if (bootMode == MODE_AP) {
+      handleRoot();
+    } else {
+      server.send(404, "text/plain", "Not Found");
+    }
+  });
   bootSwirl(sf++);
 
   // 8. SYSTEM READY
@@ -958,12 +1514,15 @@ void setup() {
   ring.show();
   
   // Set LED brightness for main loop
-  ring.setBrightness(255);
+  ring.setBrightness(ledBrightness);
 }
 
 void loop()
 {
   unsigned long now = millis();
+  if (bootMode == MODE_AP) {
+    dnsServer.processNextRequest();
+  }
   server.handleClient();
 
   // Handle MQTT connectivity if in MQTT mode
@@ -976,6 +1535,13 @@ void loop()
 
   // --- LID STATUS ---
   bool lidOff = (digitalRead(LID_PIN) == HIGH);
+  int lidOffMinutes = 0;
+  if (lidOff) {
+    if (lidOffStartMs == 0) lidOffStartMs = now;
+    lidOffMinutes = (int)((now - lidOffStartMs) / 60000UL);
+  } else {
+    lidOffStartMs = 0;
+  }
 
   // --- Water level (PAUSED if lid is off) ---
   if (!lidOff && (now - lastWaterRead > 3000))
@@ -990,13 +1556,17 @@ void loop()
   if (now - lastLedUpdate > 20)
   {
     lastLedUpdate = now;
-    if (lidOff) {
+    if (lidOff && !manualOverride) {
       drawBreathingRed(); // Override with Red Breath
     } else {
       switch (currentLedMode) {
-        case LED_WAVE:  drawWave();  break;
-        case LED_SOLID: /* placeholder */ break;
-        case LED_SMART: /* placeholder */ break;
+        case LED_OFF:       drawLedOff(); break;
+        case LED_WAVE:      drawWave(); break;
+        case LED_STATIC:    drawLedStatic(); break;
+        case LED_MOVING:    drawLedMoving(); break;
+        case LED_SMART:     drawLedSmartLevel(); break;
+        case LED_BREATHING: drawLedBreathing(); break;
+        case LED_RAINBOW:   drawLedRainbow(); break;
       }
     }
   }
@@ -1023,28 +1593,24 @@ void loop()
   }
 
   // --- Routine checking ---
-  if (bootMode == MODE_MQTT)
+  DateTime nowRTC = getRTCNowSafe();
+  int currentHour = nowRTC.hour();
+  int currentMinute = nowRTC.minute();
+  int currentDay = (nowRTC.dayOfTheWeek() + 6) % 7; // Convert Sun=0..Sat=6 to Mon=0..Sun=6
+
+  if (currentMinute != lastMinute)
   {
-    // REPLACE timeClient calls with rtc.now()
-    DateTime nowRTC = rtc.now();
-    int currentHour = nowRTC.hour();
-    int currentMinute = nowRTC.minute();
-    int currentDay = nowRTC.dayOfTheWeek(); // NTPClient uses 0-6, RTClib also uses 0-6 (Sun-Sat)
+    lastMinute = currentMinute;
+    String routines = storage.loadRoutines();
+    int duration = 0;
+    int pumpToRun = routineExec.checkRoutines(
+        routines, currentDay, currentHour, currentMinute,
+        moisturePercent, duration, pumpMlPerSec);
 
-    if (currentMinute != lastMinute)
+    if (pumpToRun >= 0 && pumpToRun < 4)
     {
-      lastMinute = currentMinute;
-      String routines = storage.loadRoutines();
-      int duration = 0;
-      int pumpToRun = routineExec.checkRoutines(
-          routines, currentDay, currentHour, currentMinute,
-          moisturePercent, duration);
-
-      if (pumpToRun >= 0 && pumpToRun < 4)
-      {
-        Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
-        activatePump(pumpToRun, duration);
-      }
+      Serial.printf("Executing routine: Pump %d for %ds\n", pumpToRun + 1, duration);
+      activatePump(pumpToRun, duration);
     }
   }
 
@@ -1053,13 +1619,14 @@ void loop()
   {
     lastAutomationCheck = now;
     String automations = storage.loadAutomations();
-    int hour = bootMode == MODE_MQTT ? timeClient.getHours() : 12;
-    int minute = bootMode == MODE_MQTT ? timeClient.getMinutes() : 0;
+    DateTime autoNow = getRTCNowSafe();
+    int hour = autoNow.hour();
+    int minute = autoNow.minute();
 
     automationExec.checkAutomations(
         automations, moisturePercent, waterLevelPercent,
-        pumpActive, hour, minute,
-        pumpActionCallback, whatsappActionCallback);
+        pumpActive, lidOff, lidOffMinutes, hour, minute,
+        pumpActionCallback, whatsappActionCallback, ledModeActionCallback);
   }
 
   // --- OLED refresh ---
@@ -1074,5 +1641,13 @@ void loop()
   { // Once every 24h
     syncRTCFromWiFi();
     lastSync = millis();
+  }
+
+  if (millis() - lastRtcPersistMs > 60000UL) {
+    DateTime dt = rtc.now();
+    if (isRTCValid(dt)) {
+      persistRTCBackup(dt.unixtime());
+    }
+    lastRtcPersistMs = millis();
   }
 }

@@ -29,6 +29,9 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     <button id="nav-dash" class="nav-btn active" onclick="showView('main-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg> Dashboard
     </button>
+    <button id="nav-led" class="nav-btn" onclick="showView('led-view')">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M9 21h6v-1H9v1zm3-20C8.69 1 6 3.69 6 7c0 2.38 1.19 4.47 3 5.74V16c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.31-2.69-6-6-6z"/></svg> LED Ring
+    </button>
     <button id="nav-rout" class="nav-btn" onclick="showView('routine-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg> Routines
     </button>
@@ -55,35 +58,53 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
     
     <div class="card status-card">
       <div><span id="status-dot"></span><span id="conn-status">Searching...</span></div>
-      <div>Tank: <span id="waterLvl" class="stat">--</span>%</div>
+      <div>Tank: <span id="waterLvl" class="stat">--</span></div>
       <div>Temp: <span id="temp" class="stat">--</span>°C</div>
+      <div>Time: <span id="dashTime" class="stat">--:--</span> <span id="dashDay">---</span></div>
       <div class="updated-text">Synced: <span id="last-upd">Never</span></div>
     </div>
     
     <div class="card">
+      <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+        <label for="run-unit-select"><b>Run Input:</b></label>
+        <select id="run-unit-select" class="dropdown-select" style="max-width:160px;" onchange="setRunInputMode(this.value)">
+          <option value="sec">Timed Run (s)</option>
+          <option value="ml">ML Dispensed</option>
+        </select>
+      </div>
       <table>
-        <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
+        <tr><th>Pump</th><th>Moisture</th><th id="run-mode-header">Timed Run (s)</th><th>Manual</th></tr>
         <tr>
-          <td>P1</td><td><span id="m1">--</span>%</td>
-          <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
+          <td><span id="pumpDot1" class="pump-dot"></span>P1</td><td><span id="m1">--</span></td>
+          <td><input type="number" id="t1" value="10" style="width:80px"> <button onclick="startPump(1)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
         </tr>
         <tr>
-          <td>P2</td><td><span id="m2">--</span>%</td>
-          <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
+          <td><span id="pumpDot2" class="pump-dot"></span>P2</td><td><span id="m2">--</span></td>
+          <td><input type="number" id="t2" value="10" style="width:80px"> <button onclick="startPump(2)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
         </tr>
         <tr>
-          <td>P3</td><td><span id="m3">--</span>%</td>
-          <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
+          <td><span id="pumpDot3" class="pump-dot"></span>P3</td><td><span id="m3">--</span></td>
+          <td><input type="number" id="t3" value="10" style="width:80px"> <button onclick="startPump(3)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
         </tr>
         <tr>
-          <td>P4</td><td><span id="m4">--</span>%</td>
-          <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
+          <td><span id="pumpDot4" class="pump-dot"></span>P4</td><td><span id="m4">--</span></td>
+          <td><input type="number" id="t4" value="10" style="width:80px"> <button onclick="startPump(4)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
         </tr>
       </table>
+      <div id="run-warning" class="error-msg" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">LED Quick Actions</h3>
+      <button class="save-btn" onclick="setLedModeQuick('off')">Off</button>
+      <button class="save-btn" onclick="setLedModeQuick('normal')">Normal</button>
+      <button class="save-btn" onclick="setLedModeQuick('moving')">Moving</button>
+      <button class="save-btn" onclick="setLedModeQuick('smart')">Smart</button>
+      <button class="save-btn" onclick="setLedModeQuick('rgb')">RGB</button>
     </div>
   </div>
 
@@ -135,8 +156,100 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <tr><td>M4</td><td><span id="raw4">--</span></td><td><button class="save-btn" onclick="saveCal(4, 'wet', 'M4 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(4, 'dry', 'M4 Dry')">Set</button></td></tr>
       </table>
     </div>
+    <div class="card">
+      <h3>Pump Calibration (ml/s)</h3>
+      <table>
+        <tr><th>Pump</th><th>10s Test</th><th>Dispensed (ml)</th><th>Save</th></tr>
+        <tr><td>P1</td><td><button class="save-btn" onclick="runPumpCalibration(1)">Run 10s</button></td><td><input type="number" id="pumpMl1" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(1)">Save</button></td></tr>
+        <tr><td>P2</td><td><button class="save-btn" onclick="runPumpCalibration(2)">Run 10s</button></td><td><input type="number" id="pumpMl2" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(2)">Save</button></td></tr>
+        <tr><td>P3</td><td><button class="save-btn" onclick="runPumpCalibration(3)">Run 10s</button></td><td><input type="number" id="pumpMl3" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(3)">Save</button></td></tr>
+        <tr><td>P4</td><td><button class="save-btn" onclick="runPumpCalibration(4)">Run 10s</button></td><td><input type="number" id="pumpMl4" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(4)">Save</button></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div id="led-view" class="hidden">
+    <h2>LED Ring Controls</h2>
+    <div class="card">
+      <h3>Effect Mode</h3>
+      <div class="led-mode-list">
+        <label><input type="radio" name="led-mode" value="off"> Off</label>
+        <label><input type="radio" name="led-mode" value="normal"> Normal</label>
+        <label><input type="radio" name="led-mode" value="static"> Static</label>
+        <label><input type="radio" name="led-mode" value="moving"> Moving Palette</label>
+        <label><input type="radio" name="led-mode" value="smart"> Smart Water Level</label>
+        <label><input type="radio" name="led-mode" value="breathing"> Breathing</label>
+        <label><input type="radio" name="led-mode" value="rgb"> RGB Circle</label>
+      </div>
+    </div>
+
+    <div class="card led-controls" id="led-static-card">
+      <h3>Static Color</h3>
+      <input type="color" id="led-static-color" value="#00A0FF">
+    </div>
+
+    <div class="card led-controls hidden" id="led-moving-card">
+      <h3>Moving Palette</h3>
+      <label class="matrix-title">Spin Speed</label>
+      <input type="range" id="led-speed" min="0.05" max="3" step="0.05" value="0.35">
+      <div id="led-speed-label" class="updated-text">0.35</div>
+      <div class="led-color-grid">
+        <input type="color" id="led-moving-1" value="#FF0000">
+        <input type="color" id="led-moving-2" value="#FF8000">
+        <input type="color" id="led-moving-3" value="#FFFF00">
+        <input type="color" id="led-moving-4" value="#00B4FF">
+        <input type="color" id="led-moving-5" value="#A000FF">
+      </div>
+    </div>
+
+    <div class="card led-controls hidden" id="led-smart-card">
+      <h3>Smart Water Level Bands</h3>
+      <div class="led-smart-layout">
+        <div class="cylinder-wrap">
+          <div class="cylinder">
+            <div class="water-band" id="band-5"></div>
+            <div class="water-band" id="band-4"></div>
+            <div class="water-band" id="band-3"></div>
+            <div class="water-band" id="band-2"></div>
+            <div class="water-band" id="band-1"></div>
+          </div>
+          <div class="updated-text">Water: <span id="led-water-pct">--</span>%</div>
+        </div>
+        <div class="led-color-grid">
+          <label>0-20% <input type="color" id="led-smart-1" value="#FF0000"></label>
+          <label>20-40% <input type="color" id="led-smart-2" value="#FF8000"></label>
+          <label>40-60% <input type="color" id="led-smart-3" value="#FFFF00"></label>
+          <label>60-80% <input type="color" id="led-smart-4" value="#00B400"></label>
+          <label>80-100% <input type="color" id="led-smart-5" value="#0078FF"></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card led-controls hidden" id="led-breathing-card">
+      <h3>Breathing Color</h3>
+      <input type="color" id="led-breath-color" value="#FF3C0A">
+    </div>
+
+    <div class="card led-controls hidden" id="led-rgb-card">
+      <h3>RGB Circle Speed</h3>
+      <input type="range" id="led-rgb-speed" min="0.05" max="5" step="0.05" value="1.00">
+      <div id="led-rgb-speed-label" class="updated-text">1.00</div>
+    </div>
+
+    <div class="card">
+      <h3>Global Brightness</h3>
+      <input type="range" id="led-brightness" min="5" max="255" step="1" value="255">
+      <div id="led-brightness-label" class="updated-text">255</div>
+    </div>
+
+    <div class="card">
+      <button class="save-btn" onclick="saveLedConfig()">Apply LED Settings</button>
+      <button class="save-btn" onclick="loadLedStatus()" style="margin-left:8px;">Refresh</button>
+    </div>
   </div>
 </div>
+
+<div id="save-toast" class="save-toast">Settings Stored</div>
 
 <div id="modal-container" class="modal-overlay hidden">
   <div class="modal-content">
@@ -227,6 +340,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <option value="moisture_above">Moisture rises above</option>
       <option value="water_below">Water tank falls below</option>
       <option value="water_above">Water tank rises above</option>
+      <option value="lid_off">LID is OFF</option>
       <option value="pump_starts">Pump starts</option>
       <option value="pump_stops">Pump stops</option>
       <option value="time">At specific time</option>
@@ -244,6 +358,10 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         </select>
         <label class="matrix-title">Threshold (%)</label>
         <input type="number" id="notif-threshold" min="0" max="100" value="30" class="dropdown-select">
+      </div>
+      <div id="when-water-group" class="hidden condition-group">
+        <label class="matrix-title">Tank Threshold (%)</label>
+        <input type="number" id="notif-water-threshold" min="0" max="100" value="30" class="dropdown-select">
       </div>
       
       <div id="when-pump-group" class="hidden condition-group">
@@ -269,6 +387,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <option value="moisture_above">Moisture is above</option>
       <option value="water_below">Water tank is below</option>
       <option value="water_above">Water tank is above</option>
+      <option value="lid_off_for">LID OFF for X mins</option>
       <option value="time_between">Time is between</option>
     </select>
     
@@ -284,12 +403,20 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
         <label class="matrix-title">Threshold (%)</label>
         <input type="number" id="notif-if-threshold" min="0" max="100" value="50" class="dropdown-select">
       </div>
+      <div id="if-water-group" class="hidden condition-group">
+        <label class="matrix-title">Tank Threshold (%)</label>
+        <input type="number" id="notif-if-water-threshold" min="0" max="100" value="50" class="dropdown-select">
+      </div>
       
       <div id="if-time-group" class="hidden condition-group">
         <label class="matrix-title">From</label>
         <input type="time" id="notif-if-time-from" class="dropdown-select" value="08:00">
         <label class="matrix-title">To</label>
         <input type="time" id="notif-if-time-to" class="dropdown-select" value="20:00">
+      </div>
+      <div id="if-lid-group" class="hidden condition-group">
+        <label class="matrix-title">Minutes</label>
+        <input type="number" id="notif-if-lid-mins" min="1" value="10" class="dropdown-select">
       </div>
     </div>
     
@@ -299,6 +426,7 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <option value="whatsapp">Send WhatsApp message</option>
       <option value="pump_on">Turn pump on</option>
       <option value="pump_off">Turn pump off</option>
+      <option value="led_mode">Set LED mode</option>
     </select>
     <div id="err-notif-do" class="error-msg">Select an action</div>
     
@@ -306,6 +434,8 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
       <div id="do-whatsapp-group" class="hidden condition-group">
         <label class="matrix-title">Message</label>
         <textarea id="notif-message" placeholder="Enter message..." class="dropdown-select" style="min-height:80px; resize:vertical;"></textarea>
+        <label class="matrix-title">Repeat Every (hours, 0 = no limit)</label>
+        <input type="number" id="notif-repeat-hours" min="0" value="0" class="dropdown-select">
         <div style="font-size:0.75em; color:#666; margin-top:5px;">
           Variables: {sensor}, {value}, {pump}, {tank}
         </div>
@@ -323,6 +453,18 @@ const char INDEX_HTML_BODY[] PROGMEM = R"rawliteral(
           <label class="matrix-title">Duration (seconds)</label>
           <input type="number" id="notif-pump-duration" min="1" value="10" class="dropdown-select">
         </div>
+      </div>
+      <div id="do-led-group" class="hidden condition-group">
+        <label class="matrix-title">LED Mode</label>
+        <select id="notif-led-mode" class="dropdown-select">
+          <option value="off">Off</option>
+          <option value="normal">Normal</option>
+          <option value="static">Static</option>
+          <option value="moving">Moving</option>
+          <option value="smart">Smart</option>
+          <option value="breathing">Breathing</option>
+          <option value="rgb">RGB Circle</option>
+        </select>
       </div>
     </div>
     

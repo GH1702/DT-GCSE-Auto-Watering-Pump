@@ -218,12 +218,18 @@ public:
 
 class RoutineExecutor {
 public:
+  RoutineExecutor() {
+    for (int i = 0; i < MAX_ROUTINES; i++) {
+      smartActive[i] = false;
+      smartIds[i] = 0;
+    }
+  }
   
   // Check if it's time to run any routines
   // Returns: pump index (0-3) to activate, or -1 if none
   // duration: output parameter for how long to run (in seconds)
   int checkRoutines(String routinesJSON, int currentDay, int currentHour, int currentMinute, 
-                    int* moistureLevels, int& duration) {
+                    int* moistureLevels, int& duration, float* pumpMlPerSec) {
     
     // Parse JSON array
     StaticJsonDocument<4096> doc;
@@ -237,6 +243,8 @@ public:
     JsonArray routines = doc.as<JsonArray>();
     
     for (JsonObject routine : routines) {
+      bool enabled = routine["enabled"] | true;
+      if (!enabled) continue;
       String mode = routine["mode"] | "static";
       JsonArray days = routine["days"];
       
@@ -254,9 +262,14 @@ public:
             int pump = routine["p"] | 0;
             int amount = routine["val"] | 100;
             
-            // Convert ml to seconds (rough estimate: 100ml = 10s)
-            duration = amount / 10;
+            // Convert ml to seconds using per-pump calibration.
+            float rate = 21.5f;
+            if (pumpMlPerSec && pump >= 1 && pump <= 4 && pumpMlPerSec[pump - 1] > 0.01f) {
+              rate = pumpMlPerSec[pump - 1];
+            }
+            duration = (int)ceil((float)amount / rate);
             if (duration < 1) duration = 1;
+            if (duration > 10) duration = 10; // Respect watchdog window
             
             Serial.printf("ROUTINE TRIGGERED: %s at %02d:%02d\n", 
                          routine["name"].as<const char*>(), hour, minute);
@@ -265,22 +278,35 @@ public:
         }
       }
       else if (mode == "smart") {
-        // Moisture-based routine
+        // Moisture-based routine with hysteresis:
+        // start when moisture drops below 10% of trigger, then keep running
+        // in watchdog-sized pulses until moisture reaches the trigger.
+        long routineId = routine["id"] | 0;
         int sensor = routine["s"] | 0;
         int threshold = routine["val"] | 30;
         int pump = routine["p"] | 0;
         
         if (sensor >= 1 && sensor <= 4) {
           int moisture = moistureLevels[sensor - 1];
-          
-          if (moisture < threshold) {
-            // Check time window
-            bool inWindow = checkTimeWindow(routine, currentHour, currentMinute);
-            
-            if (inWindow) {
-              duration = 10; // Default smart watering duration
-              Serial.printf("SMART ROUTINE TRIGGERED: %s (M%d: %d%% < %d%%)\n",
-                           routine["name"].as<const char*>(), sensor, moisture, threshold);
+          bool inWindow = checkTimeWindow(routine, currentHour, currentMinute);
+          if (!inWindow) continue;
+
+          int startThreshold = max(1, threshold / 10); // 10% of trigger%
+          int slot = getRoutineSlot(routineId);
+          bool isActive = (slot >= 0) ? smartActive[slot] : false;
+
+          if (!isActive && moisture <= startThreshold) {
+            if (slot >= 0) smartActive[slot] = true;
+            isActive = true;
+          }
+
+          if (isActive) {
+            if (moisture >= threshold) {
+              if (slot >= 0) smartActive[slot] = false;
+            } else {
+              duration = 10; // Keep each run within watchdog window
+              Serial.printf("SMART ROUTINE RUN: %s (M%d: %d%%, start<=%d%%, target=%d%%)\n",
+                           routine["name"].as<const char*>(), sensor, moisture, startThreshold, threshold);
               return pump - 1;
             }
           }
@@ -292,6 +318,23 @@ public:
   }
 
 private:
+  bool smartActive[MAX_ROUTINES];
+  long smartIds[MAX_ROUTINES];
+
+  int getRoutineSlot(long routineId) {
+    for (int i = 0; i < MAX_ROUTINES; i++) {
+      if (smartIds[i] == routineId) return i;
+    }
+    for (int i = 0; i < MAX_ROUTINES; i++) {
+      if (smartIds[i] == 0) {
+        smartIds[i] = routineId;
+        smartActive[i] = false;
+        return i;
+      }
+    }
+    return -1;
+  }
+
   bool checkTimeWindow(JsonObject routine, int hour, int minute) {
     bool inverted = routine["inv"] | false;
     int minSlot = routine["min"] | 16;  // 08:00
@@ -312,12 +355,20 @@ private:
 
 class AutomationExecutor {
 public:
+  AutomationExecutor() {
+    for (int i = 0; i < MAX_AUTOMATIONS; i++) {
+      autoIds[i] = 0;
+      lastWhatsAppMs[i] = 0;
+    }
+  }
   
   // Check all automations and execute actions if triggered
   void checkAutomations(String automationsJSON, int* moistureLevels, int waterLevel,
-                       bool* pumpStates, int currentHour, int currentMinute,
+                       bool* pumpStates, bool lidOff, int lidOffMinutes,
+                       int currentHour, int currentMinute,
                        void (*pumpCallback)(int, int), 
-                       void (*whatsappCallback)(String)) {
+                       void (*whatsappCallback)(String),
+                       void (*ledModeCallback)(String)) {
     
     StaticJsonDocument<4096> doc;
     DeserializationError error = deserializeJson(doc, automationsJSON);
@@ -330,28 +381,48 @@ public:
     JsonArray automations = doc.as<JsonArray>();
     
     for (JsonObject auto_obj : automations) {
+      bool enabled = auto_obj["enabled"] | true;
+      if (!enabled) continue;
       // Check WHEN condition
       bool whenTriggered = checkWhenCondition(auto_obj["when"], 
-                                               moistureLevels, waterLevel, pumpStates);
+                                               moistureLevels, waterLevel, pumpStates, lidOff);
       
       if (!whenTriggered) continue;
       
       // Check IF condition (optional)
       if (auto_obj.containsKey("if") && !auto_obj["if"].isNull()) {
         bool ifCondition = checkIfCondition(auto_obj["if"], 
-                                            moistureLevels, waterLevel, 
+                                            moistureLevels, waterLevel, lidOff, lidOffMinutes,
                                             currentHour, currentMinute);
         if (!ifCondition) continue;
       }
       
       // Execute DO action
-      executeAction(auto_obj["do"], auto_obj["name"], 
-                   pumpCallback, whatsappCallback);
+      unsigned long long autoId = auto_obj["id"] | 0;
+      executeAction(auto_obj["do"], auto_obj["name"], autoId,
+                   pumpCallback, whatsappCallback, ledModeCallback);
     }
   }
 
 private:
-  bool checkWhenCondition(JsonObject when, int* moisture, int water, bool* pumps) {
+  unsigned long long autoIds[MAX_AUTOMATIONS];
+  unsigned long lastWhatsAppMs[MAX_AUTOMATIONS];
+
+  int getAutoSlot(unsigned long long id) {
+    for (int i = 0; i < MAX_AUTOMATIONS; i++) {
+      if (autoIds[i] == id) return i;
+    }
+    for (int i = 0; i < MAX_AUTOMATIONS; i++) {
+      if (autoIds[i] == 0) {
+        autoIds[i] = id;
+        lastWhatsAppMs[i] = 0;
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  bool checkWhenCondition(JsonObject when, int* moisture, int water, bool* pumps, bool lidOff) {
     String type = when["type"] | "";
     
     if (type == "moisture_below") {
@@ -380,11 +451,14 @@ private:
       int pump = when["pump"] | 1;
       return !pumps[pump - 1];
     }
+    else if (type == "lid_off") {
+      return lidOff;
+    }
     
     return false;
   }
 
-  bool checkIfCondition(JsonObject ifCond, int* moisture, int water, int hour, int minute) {
+  bool checkIfCondition(JsonObject ifCond, int* moisture, int water, bool lidOff, int lidOffMinutes, int hour, int minute) {
     String type = ifCond["type"] | "";
     
     if (type == "moisture_below") {
@@ -420,19 +494,34 @@ private:
       
       return (currentMinutes >= fromMinutes && currentMinutes <= toMinutes);
     }
+    else if (type == "lid_off_for") {
+      int mins = ifCond["minutes"] | 10;
+      return lidOff && lidOffMinutes >= mins;
+    }
     
     return true; // No condition = always pass
   }
 
-  void executeAction(JsonObject doAction, String autoName,
+  void executeAction(JsonObject doAction, String autoName, unsigned long long autoId,
                     void (*pumpCallback)(int, int),
-                    void (*whatsappCallback)(String)) {
+                    void (*whatsappCallback)(String),
+                    void (*ledModeCallback)(String)) {
     String type = doAction["type"] | "";
     
     if (type == "whatsapp") {
       String message = doAction["message"] | "";
-      Serial.printf("AUTOMATION: %s -> WhatsApp: %s\n", autoName.c_str(), message.c_str());
-      if (whatsappCallback) whatsappCallback(message);
+      int repeatHours = doAction["repeatHours"] | 0;
+      int slot = getAutoSlot(autoId);
+      bool sendNow = true;
+      if (repeatHours > 0 && slot >= 0) {
+        unsigned long cooldownMs = (unsigned long)repeatHours * 3600000UL;
+        if (millis() - lastWhatsAppMs[slot] < cooldownMs) sendNow = false;
+      }
+      if (sendNow) {
+        Serial.printf("AUTOMATION: %s -> WhatsApp: %s\n", autoName.c_str(), message.c_str());
+        if (whatsappCallback) whatsappCallback(message);
+        if (slot >= 0) lastWhatsAppMs[slot] = millis();
+      }
     }
     else if (type == "pump_on") {
       int pump = doAction["pump"] | 1;
@@ -444,6 +533,11 @@ private:
       int pump = doAction["pump"] | 1;
       Serial.printf("AUTOMATION: %s -> Pump %d OFF\n", autoName.c_str(), pump);
       if (pumpCallback) pumpCallback(pump - 1, 0); // 0 = stop
+    }
+    else if (type == "led_mode") {
+      String ledMode = doAction["ledMode"] | "normal";
+      Serial.printf("AUTOMATION: %s -> LED mode %s\n", autoName.c_str(), ledMode.c_str());
+      if (ledModeCallback) ledModeCallback(ledMode);
     }
   }
 };
