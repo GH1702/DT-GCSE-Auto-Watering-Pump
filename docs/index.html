@@ -691,8 +691,8 @@ svg.nav-icon {
 <body>
 <div class="container">
 
- 
- 
+
+
   <div class="nav-group">
     <button id="nav-dash" class="nav-btn active" onclick="showView('main-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg> Dashboard
@@ -2107,7 +2107,7 @@ function updateStatus() {
       }
       updateLedWaterPreview(data.water);
       document.getElementById("status-dot").style.backgroundColor = "#4CAF50";
-      document.getElementById("conn-status").innerText = "Connected (Simulation)";
+      document.getElementById("conn-status").innerText = "Connected (Simulated)";
       document.getElementById("last-upd").innerText = new Date().toLocaleTimeString();
     })
     .catch(e => {
