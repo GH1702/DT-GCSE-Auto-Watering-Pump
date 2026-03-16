@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plant Control & Automations</title>
-  <style>
+<style>
 :root { 
   --primary: #2196F3; 
   --success: #4CAF50; 
@@ -112,6 +112,8 @@ th {
   display: flex; 
   justify-content: space-around; 
   align-items: center; 
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .stat { 
@@ -175,6 +177,19 @@ th {
   border-radius: 50%; 
   display: inline-block; 
   margin-right: 5px; 
+}
+
+.pump-dot {
+  height: 10px;
+  width: 10px;
+  background-color: #bbb;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.pump-dot.on {
+  background-color: #4CAF50;
 }
 
 .updated-text { 
@@ -383,8 +398,17 @@ input[type="range"]::-moz-range-thumb {
 
 .btn-edit { 
   background: #757575; 
+  font-size: 0;
+  position: relative;
+}
+
+.btn-edit::before {
+  content: "✏";
   font-size: 16px;
-  transform: rotate(-45deg);
+  line-height: 1;
+  display: inline-block;
+  transform: rotate(135deg);
+  color: white;
 }
 
 .btn-run {
@@ -393,8 +417,8 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .btn-run svg {
-  width: 16px; 
-  height: 16px; 
+  width: 16px;
+  height: 16px;
   fill: white;
 }
 
@@ -549,26 +573,132 @@ svg.nav-icon {
   color: var(--primary);
 }
 
+.led-mode-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.led-mode-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.led-mode-list input[type="radio"] {
+  transform: scale(1.1);
+}
+
+.led-color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(55px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.led-color-grid label {
+  font-size: 12px;
+  color: #555;
+}
+
+.led-color-grid input[type="color"] {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 2px;
+  background: #fff;
+}
+
+.led-smart-layout {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cylinder-wrap {
+  min-width: 140px;
+}
+
+.cylinder {
+  width: 80px;
+  height: 190px;
+  margin: 0 auto 8px auto;
+  border: 3px solid #555;
+  border-radius: 40px;
+  padding: 6px;
+  box-sizing: border-box;
+  background: #eef3f8;
+  display: flex;
+  flex-direction: column;
+}
+
+.water-band {
+  flex: 1;
+  border-radius: 20px;
+  margin: 2px 0;
+  transition: opacity 0.2s ease;
+}
+
+.save-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: #2e7d32;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.25);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 1200;
+  pointer-events: none;
+}
+
+.save-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* Demo banner */
 .demo-banner {
   background: #fff3cd;
-  border: 1px solid #ffc107;
+  border: 2px solid #ffc107;
   border-radius: 8px;
-  padding: 8px 15px;
-  margin-bottom: 15px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
   font-size: 0.85em;
   color: #856404;
+  font-weight: bold;
 }
-  </style>
+
+@media (max-width: 650px) {
+  .led-mode-list {
+    grid-template-columns: 1fr;
+  }
+  .led-color-grid {
+    grid-template-columns: repeat(3, minmax(55px, 1fr));
+  }
+}
+</style>
 </head>
 <body>
 <div class="container">
 
-
-
+ 
+ 
   <div class="nav-group">
     <button id="nav-dash" class="nav-btn active" onclick="showView('main-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg> Dashboard
+    </button>
+    <button id="nav-led" class="nav-btn" onclick="showView('led-view')">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M9 21h6v-1H9v1zm3-20C8.69 1 6 3.69 6 7c0 2.38 1.19 4.47 3 5.74V16c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.31-2.69-6-6-6z"/></svg> LED Ring
     </button>
     <button id="nav-rout" class="nav-btn" onclick="showView('routine-view')">
       <svg class="nav-icon" viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg> Routines
@@ -596,35 +726,53 @@ svg.nav-icon {
     
     <div class="card status-card">
       <div><span id="status-dot"></span><span id="conn-status">Searching...</span></div>
-      <div>Tank: <span id="waterLvl" class="stat">--</span>%</div>
+      <div>Tank: <span id="waterLvl" class="stat">--</span></div>
       <div>Temp: <span id="temp" class="stat">--</span>°C</div>
+      <div>Time: <span id="dashTime" class="stat">--:--</span> <span id="dashDay">---</span></div>
       <div class="updated-text">Synced: <span id="last-upd">Never</span></div>
     </div>
     
     <div class="card">
+      <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+        <label for="run-unit-select"><b>Run Input:</b></label>
+        <select id="run-unit-select" class="dropdown-select" style="max-width:160px;" onchange="setRunInputMode(this.value)">
+          <option value="sec">Timed Run (s)</option>
+          <option value="ml">ML Dispensed</option>
+        </select>
+      </div>
       <table>
-        <tr><th>Pump</th><th>Moisture</th><th>Timed Run (s)</th><th>Manual</th></tr>
+        <tr><th>Pump</th><th>Moisture</th><th id="run-mode-header">Timed Run (s)</th><th>Manual</th></tr>
         <tr>
-          <td>P1</td><td><span id="m1">--</span>%</td>
-          <td><input type="number" id="t1" value="10" style="width:55px"> <button onclick="startPump(1)">Go</button></td>
+          <td><span id="pumpDot1" class="pump-dot"></span>P1</td><td><span id="m1">--</span></td>
+          <td><input type="number" id="t1" value="10" style="width:80px"> <button onclick="startPump(1)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 1)">ON</button> <button class="off-btn" onclick="controlPump('off', 1)">OFF</button></td>
         </tr>
         <tr>
-          <td>P2</td><td><span id="m2">--</span>%</td>
-          <td><input type="number" id="t2" value="10" style="width:55px"> <button onclick="startPump(2)">Go</button></td>
+          <td><span id="pumpDot2" class="pump-dot"></span>P2</td><td><span id="m2">--</span></td>
+          <td><input type="number" id="t2" value="10" style="width:80px"> <button onclick="startPump(2)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 2)">ON</button> <button class="off-btn" onclick="controlPump('off', 2)">OFF</button></td>
         </tr>
         <tr>
-          <td>P3</td><td><span id="m3">--</span>%</td>
-          <td><input type="number" id="t3" value="10" style="width:55px"> <button onclick="startPump(3)">Go</button></td>
+          <td><span id="pumpDot3" class="pump-dot"></span>P3</td><td><span id="m3">--</span></td>
+          <td><input type="number" id="t3" value="10" style="width:80px"> <button onclick="startPump(3)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 3)">ON</button> <button class="off-btn" onclick="controlPump('off', 3)">OFF</button></td>
         </tr>
         <tr>
-          <td>P4</td><td><span id="m4">--</span>%</td>
-          <td><input type="number" id="t4" value="10" style="width:55px"> <button onclick="startPump(4)">Go</button></td>
+          <td><span id="pumpDot4" class="pump-dot"></span>P4</td><td><span id="m4">--</span></td>
+          <td><input type="number" id="t4" value="10" style="width:80px"> <button onclick="startPump(4)">Go</button></td>
           <td><button class="on-btn" onclick="controlPump('on', 4)">ON</button> <button class="off-btn" onclick="controlPump('off', 4)">OFF</button></td>
         </tr>
       </table>
+      <div id="run-warning" class="error-msg" style="display:none;"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">LED Quick Actions</h3>
+      <button class="save-btn" onclick="setLedModeQuick('off')">Off</button>
+      <button class="save-btn" onclick="setLedModeQuick('normal')">Normal</button>
+      <button class="save-btn" onclick="setLedModeQuick('moving')">Moving</button>
+      <button class="save-btn" onclick="setLedModeQuick('smart')">Smart</button>
+      <button class="save-btn" onclick="setLedModeQuick('rgb')">RGB</button>
     </div>
   </div>
 
@@ -676,10 +824,101 @@ svg.nav-icon {
         <tr><td>M4</td><td><span id="raw4">--</span></td><td><button class="save-btn" onclick="saveCal(4, 'wet', 'M4 Wet')">Set</button></td><td><button class="save-btn" onclick="saveCal(4, 'dry', 'M4 Dry')">Set</button></td></tr>
       </table>
     </div>
+    <div class="card">
+      <h3>Pump Calibration (ml/s)</h3>
+      <table>
+        <tr><th>Pump</th><th>10s Test</th><th>Dispensed (ml)</th><th>Save</th></tr>
+        <tr><td>P1</td><td><button class="save-btn" onclick="runPumpCalibration(1)">Run 10s</button></td><td><input type="number" id="pumpMl1" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(1)">Save</button></td></tr>
+        <tr><td>P2</td><td><button class="save-btn" onclick="runPumpCalibration(2)">Run 10s</button></td><td><input type="number" id="pumpMl2" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(2)">Save</button></td></tr>
+        <tr><td>P3</td><td><button class="save-btn" onclick="runPumpCalibration(3)">Run 10s</button></td><td><input type="number" id="pumpMl3" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(3)">Save</button></td></tr>
+        <tr><td>P4</td><td><button class="save-btn" onclick="runPumpCalibration(4)">Run 10s</button></td><td><input type="number" id="pumpMl4" value="215"></td><td><button class="save-btn" onclick="savePumpCalibration(4)">Save</button></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div id="led-view" class="hidden">
+    <h2>LED Ring Controls</h2>
+    <div class="card">
+      <h3>Effect Mode</h3>
+      <div class="led-mode-list">
+        <label><input type="radio" name="led-mode" value="off"> Off</label>
+        <label><input type="radio" name="led-mode" value="normal" checked> Normal</label>
+        <label><input type="radio" name="led-mode" value="static"> Static</label>
+        <label><input type="radio" name="led-mode" value="moving"> Moving Palette</label>
+        <label><input type="radio" name="led-mode" value="smart"> Smart Water Level</label>
+        <label><input type="radio" name="led-mode" value="breathing"> Breathing</label>
+        <label><input type="radio" name="led-mode" value="rgb"> RGB Circle</label>
+      </div>
+    </div>
+
+    <div class="card led-controls" id="led-static-card">
+      <h3>Static Color</h3>
+      <input type="color" id="led-static-color" value="#00A0FF">
+    </div>
+
+    <div class="card led-controls hidden" id="led-moving-card">
+      <h3>Moving Palette</h3>
+      <label class="matrix-title">Spin Speed</label>
+      <input type="range" id="led-speed" min="0.05" max="3" step="0.05" value="0.35">
+      <div id="led-speed-label" class="updated-text">0.35</div>
+      <div class="led-color-grid">
+        <input type="color" id="led-moving-1" value="#FF0000">
+        <input type="color" id="led-moving-2" value="#FF8000">
+        <input type="color" id="led-moving-3" value="#FFFF00">
+        <input type="color" id="led-moving-4" value="#00B4FF">
+        <input type="color" id="led-moving-5" value="#A000FF">
+      </div>
+    </div>
+
+    <div class="card led-controls hidden" id="led-smart-card">
+      <h3>Smart Water Level Bands</h3>
+      <div class="led-smart-layout">
+        <div class="cylinder-wrap">
+          <div class="cylinder">
+            <div class="water-band" id="band-5"></div>
+            <div class="water-band" id="band-4"></div>
+            <div class="water-band" id="band-3"></div>
+            <div class="water-band" id="band-2"></div>
+            <div class="water-band" id="band-1"></div>
+          </div>
+          <div class="updated-text">Water: <span id="led-water-pct">--</span>%</div>
+        </div>
+        <div class="led-color-grid">
+          <label>0-20% <input type="color" id="led-smart-1" value="#FF0000"></label>
+          <label>20-40% <input type="color" id="led-smart-2" value="#FF8000"></label>
+          <label>40-60% <input type="color" id="led-smart-3" value="#FFFF00"></label>
+          <label>60-80% <input type="color" id="led-smart-4" value="#00B400"></label>
+          <label>80-100% <input type="color" id="led-smart-5" value="#0078FF"></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card led-controls hidden" id="led-breathing-card">
+      <h3>Breathing Color</h3>
+      <input type="color" id="led-breath-color" value="#FF3C0A">
+    </div>
+
+    <div class="card led-controls hidden" id="led-rgb-card">
+      <h3>RGB Circle Speed</h3>
+      <input type="range" id="led-rgb-speed" min="0.05" max="5" step="0.05" value="1.00">
+      <div id="led-rgb-speed-label" class="updated-text">1.00</div>
+    </div>
+
+    <div class="card">
+      <h3>Global Brightness</h3>
+      <input type="range" id="led-brightness" min="5" max="255" step="1" value="255">
+      <div id="led-brightness-label" class="updated-text">255</div>
+    </div>
+
+    <div class="card">
+      <button class="save-btn" onclick="saveLedConfig()">Apply LED Settings</button>
+      <button class="save-btn" onclick="loadLedStatus()" style="margin-left:8px;">Refresh</button>
+    </div>
   </div>
 </div>
 
-<!-- Routine Modal -->
+<div id="save-toast" class="save-toast">Settings Stored</div>
+
 <div id="modal-container" class="modal-overlay hidden">
   <div class="modal-content">
     <h3 id="modal-title">Create Routine</h3>
@@ -754,7 +993,6 @@ svg.nav-icon {
   </div>
 </div>
 
-<!-- Automation Modal -->
 <div id="notif-modal-container" class="modal-overlay hidden">
   <div class="modal-content">
     <h3 id="notif-modal-title">Create Automation</h3>
@@ -770,6 +1008,7 @@ svg.nav-icon {
       <option value="moisture_above">Moisture rises above</option>
       <option value="water_below">Water tank falls below</option>
       <option value="water_above">Water tank rises above</option>
+      <option value="lid_off">LID is OFF</option>
       <option value="pump_starts">Pump starts</option>
       <option value="pump_stops">Pump stops</option>
       <option value="time">At specific time</option>
@@ -787,6 +1026,10 @@ svg.nav-icon {
         </select>
         <label class="matrix-title">Threshold (%)</label>
         <input type="number" id="notif-threshold" min="0" max="100" value="30" class="dropdown-select">
+      </div>
+      <div id="when-water-group" class="hidden condition-group">
+        <label class="matrix-title">Tank Threshold (%)</label>
+        <input type="number" id="notif-water-threshold" min="0" max="100" value="30" class="dropdown-select">
       </div>
       
       <div id="when-pump-group" class="hidden condition-group">
@@ -812,6 +1055,7 @@ svg.nav-icon {
       <option value="moisture_above">Moisture is above</option>
       <option value="water_below">Water tank is below</option>
       <option value="water_above">Water tank is above</option>
+      <option value="lid_off_for">LID OFF for X mins</option>
       <option value="time_between">Time is between</option>
     </select>
     
@@ -827,12 +1071,20 @@ svg.nav-icon {
         <label class="matrix-title">Threshold (%)</label>
         <input type="number" id="notif-if-threshold" min="0" max="100" value="50" class="dropdown-select">
       </div>
+      <div id="if-water-group" class="hidden condition-group">
+        <label class="matrix-title">Tank Threshold (%)</label>
+        <input type="number" id="notif-if-water-threshold" min="0" max="100" value="50" class="dropdown-select">
+      </div>
       
       <div id="if-time-group" class="hidden condition-group">
         <label class="matrix-title">From</label>
         <input type="time" id="notif-if-time-from" class="dropdown-select" value="08:00">
         <label class="matrix-title">To</label>
         <input type="time" id="notif-if-time-to" class="dropdown-select" value="20:00">
+      </div>
+      <div id="if-lid-group" class="hidden condition-group">
+        <label class="matrix-title">Minutes</label>
+        <input type="number" id="notif-if-lid-mins" min="1" value="10" class="dropdown-select">
       </div>
     </div>
     
@@ -842,6 +1094,7 @@ svg.nav-icon {
       <option value="whatsapp">Send WhatsApp message</option>
       <option value="pump_on">Turn pump on</option>
       <option value="pump_off">Turn pump off</option>
+      <option value="led_mode">Set LED mode</option>
     </select>
     <div id="err-notif-do" class="error-msg">Select an action</div>
     
@@ -849,6 +1102,8 @@ svg.nav-icon {
       <div id="do-whatsapp-group" class="hidden condition-group">
         <label class="matrix-title">Message</label>
         <textarea id="notif-message" placeholder="Enter message..." class="dropdown-select" style="min-height:80px; resize:vertical;"></textarea>
+        <label class="matrix-title">Repeat Every (hours, 0 = no limit)</label>
+        <input type="number" id="notif-repeat-hours" min="0" value="0" class="dropdown-select">
         <div style="font-size:0.75em; color:#666; margin-top:5px;">
           Variables: {sensor}, {value}, {pump}, {tank}
         </div>
@@ -867,6 +1122,18 @@ svg.nav-icon {
           <input type="number" id="notif-pump-duration" min="1" value="10" class="dropdown-select">
         </div>
       </div>
+      <div id="do-led-group" class="hidden condition-group">
+        <label class="matrix-title">LED Mode</label>
+        <select id="notif-led-mode" class="dropdown-select">
+          <option value="off">Off</option>
+          <option value="normal">Normal</option>
+          <option value="static">Static</option>
+          <option value="moving">Moving</option>
+          <option value="smart">Smart</option>
+          <option value="breathing">Breathing</option>
+          <option value="rgb">RGB Circle</option>
+        </select>
+      </div>
     </div>
     
     <div class="btn-group">
@@ -878,116 +1145,68 @@ svg.nav-icon {
 
 <script>
 /* ============================================================
-   MOCK ESP32 LAYER
-   Replaces all fetch('/...') calls with simulated responses.
-   Sensor values drift slightly each poll to feel realistic.
+   DEMO MODE — Mock fetch() so all API calls work without ESP32
    ============================================================ */
-const mockState = {
-  water: 74,
-  temperature: 21.4,
-  m: [62, 45, 78, 33],
-  raw: [2410, 2890, 2105, 3200],
-  waterRaw: 14,
-  override: false,
-  pumps: [false, false, false, false]
-};
+(function() {
+  // Simulated state
+  const mockState = {
+    water: 72, waterRaw: 18, temperature: 21.4,
+    m: [65, 42, 78, 30], raw: [2100, 1850, 2300, 1650],
+    pumps: [false, false, false, false],
+    override: false, lidOff: false, apMode: false,
+    pumpMl: [21.5, 21.5, 21.5, 21.5],
+    rtcTime: new Date().toTimeString().slice(0,5),
+    rtcDay: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date().getDay()]
+  };
+  const mockLed = {
+    mode: 'normal', speed: 0.35, rgbSpeed: 1.00, brightness: 255,
+    static: '#00A0FF', breathing: '#FF3C0A',
+    moving: ['#FF0000','#FF8000','#FFFF00','#00B4FF','#A000FF'],
+    smart: ['#FF0000','#FF8000','#FFFF00','#00B400','#0078FF'],
+    water: 72
+  };
+  let mockRoutines = [];
+  let mockAutomations = [];
 
-// Gently drift sensor values each poll
-function driftMock() {
-  mockState.water = Math.min(100, Math.max(0, mockState.water + (Math.random() - 0.5) * 2));
-  mockState.temperature = +(mockState.temperature + (Math.random() - 0.5) * 0.3).toFixed(1);
-  for (let i = 0; i < 4; i++) {
-    mockState.m[i] = Math.min(100, Math.max(0, mockState.m[i] + (Math.random() - 0.5) * 3));
-    mockState.raw[i] = Math.round(mockState.raw[i] + (Math.random() - 0.5) * 20);
-  }
-  mockState.waterRaw = +(mockState.waterRaw + (Math.random() - 0.5) * 0.2).toFixed(1);
-}
+  const mockResponses = {
+    '/status': () => ({ ok: true, json: () => Promise.resolve({...mockState}) }),
+    '/routines_GET': () => ({ ok: true, json: () => Promise.resolve([...mockRoutines]) }),
+    '/routines_POST': (body) => { mockRoutines = JSON.parse(body); return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/automations_GET': () => ({ ok: true, json: () => Promise.resolve([...mockAutomations]) }),
+    '/automations_POST': (body) => { mockAutomations = JSON.parse(body); return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/led/status': () => ({ ok: true, json: () => Promise.resolve({...mockLed}) }),
+    '/led/config': (body) => { Object.assign(mockLed, JSON.parse(body)); return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/pump': () => { return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/calibrate': () => { return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/routine/run': () => { return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/automation/run': () => { return { ok: true, text: () => Promise.resolve('OK') }; },
+    '/time/set': () => { return { ok: true, text: () => Promise.resolve('OK') }; }
+  };
 
-// Intercept fetch and return mock Promises
-const _realFetch = window.fetch;
-window.fetch = function(url, options) {
-  const path = url.split('?')[0];
-  const params = new URLSearchParams(url.includes('?') ? url.split('?')[1] : '');
+  window._origFetch = window.fetch;
+  window.fetch = function(url, opts) {
+    const path = url.split('?')[0];
+    const method = (opts && opts.method) ? opts.method.toUpperCase() : 'GET';
+    const body = (opts && opts.body) ? opts.body : null;
+    const key = path + (method === 'POST' ? '_POST' : method === 'GET' ? '_GET' : '');
 
-  // GET /status
-  if (path === '/status' && (!options || options.method !== 'POST')) {
-    driftMock();
-    return Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({
-        water: Math.round(mockState.water),
-        temperature: mockState.temperature,
-        m: mockState.m.map(v => Math.round(v)),
-        raw: mockState.raw,
-        waterRaw: mockState.waterRaw
-      }),
-      text: () => Promise.resolve('ok')
-    });
-  }
+    // Tick the simulated clock
+    mockState.rtcTime = new Date().toTimeString().slice(0,5);
+    mockState.rtcDay = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date().getDay()];
+    // Slowly vary mock moisture for realism
+    mockState.m = mockState.m.map(v => Math.min(100, Math.max(0, v + (Math.random()-0.5)*2)));
 
-  // GET /routines
-  if (path === '/routines' && (!options || options.method !== 'POST')) {
-    return Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve(JSON.parse(localStorage.getItem('mock_routines') || '[]')),
-      text: () => Promise.resolve('ok')
-    });
-  }
-
-  // POST /routines
-  if (path === '/routines' && options && options.method === 'POST') {
-    localStorage.setItem('mock_routines', options.body);
-    return Promise.resolve({ ok: true, text: () => Promise.resolve('saved') });
-  }
-
-  // GET /automations
-  if (path === '/automations' && (!options || options.method !== 'POST')) {
-    return Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve(JSON.parse(localStorage.getItem('mock_automations') || '[]')),
-      text: () => Promise.resolve('ok')
-    });
-  }
-
-  // POST /automations
-  if (path === '/automations' && options && options.method === 'POST') {
-    localStorage.setItem('mock_automations', options.body);
-    return Promise.resolve({ ok: true, text: () => Promise.resolve('saved') });
-  }
-
-  // /pump
-  if (path === '/pump') {
-    const p = parseInt(params.get('p') || params.get('on') || params.get('off')) - 1;
-    if (params.has('on'))  { mockState.pumps[p] = true;  console.log('[MOCK] Pump ' + (p+1) + ' ON'); }
-    if (params.has('off')) { mockState.pumps[p] = false; console.log('[MOCK] Pump ' + (p+1) + ' OFF'); }
-    if (params.has('t'))   { console.log('[MOCK] Pump ' + (p+1) + ' timed run ' + params.get('t') + 's'); }
-    return Promise.resolve({ ok: true, text: () => Promise.resolve('ok') });
-  }
-
-  // /calibrate
-  if (path === '/calibrate') {
-    const type = params.get('type'), val = params.get('val');
-    if (type === 'override') {
-      mockState.override = (val === '1');
-      console.log('[MOCK] Override: ' + mockState.override);
-    } else {
-      console.log('[MOCK] Calibrate sensor=' + params.get('sensor') + ' type=' + type + ' val=' + val);
+    const handler = mockResponses[key] || mockResponses[path];
+    if (handler) {
+      return Promise.resolve(handler(body));
     }
-    return Promise.resolve({ ok: true, text: () => Promise.resolve('ok') });
-  }
-
-  // /routine/run or /automation/run
-  if (path === '/routine/run' || path === '/automation/run') {
-    console.log('[MOCK] Run triggered for id=' + params.get('id'));
-    return Promise.resolve({ ok: true, text: () => Promise.resolve('executed') });
-  }
-
-  // Fallback — pass through for anything not intercepted
-  return _realFetch.apply(this, arguments);
-};
+    // fallback — silently succeed
+    return Promise.resolve({ ok: true, text: () => Promise.resolve('OK'), json: () => Promise.resolve({}) });
+  };
+})();
 
 /* ============================================================
-   ORIGINAL APP LOGIC (unchanged from ESP32 version)
+   ORIGINAL APPLICATION JAVASCRIPT (unchanged from ESP32 build)
    ============================================================ */
 
 /* UI Navigation */
@@ -996,11 +1215,13 @@ function showView(viewId) {
   document.getElementById('routine-view').classList.add('hidden');
   document.getElementById('notif-view').classList.add('hidden');
   document.getElementById('debug-view').classList.add('hidden');
+  document.getElementById('led-view').classList.add('hidden');
   
   document.getElementById('nav-dash').classList.remove('active');
   document.getElementById('nav-rout').classList.remove('active');
   document.getElementById('nav-notif').classList.remove('active');
   document.getElementById('nav-conf').classList.remove('active');
+  document.getElementById('nav-led').classList.remove('active');
   
   document.getElementById(viewId).classList.remove('hidden');
   
@@ -1008,6 +1229,7 @@ function showView(viewId) {
   if(viewId === 'routine-view') document.getElementById('nav-rout').classList.add('active');
   if(viewId === 'notif-view') document.getElementById('nav-notif').classList.add('active');
   if(viewId === 'debug-view') document.getElementById('nav-conf').classList.add('active');
+  if(viewId === 'led-view') document.getElementById('nav-led').classList.add('active');
 }
 
 function toggleOverride() {
@@ -1037,7 +1259,32 @@ function disableOverride() {
 function startPump(p) {
   let t = document.getElementById("t" + p).value;
   if (!t || t <= 0) t = 10;
-  fetch('/pump?p=' + p + '&t=' + t);
+  const warningEl = document.getElementById('run-warning');
+  warningEl.style.display = 'none';
+
+  let url = '/pump?api=1&p=' + p;
+  if (runInputMode === 'ml') {
+    const ml = parseFloat(t);
+    const rate = pumpMlRates[p - 1] > 0 ? pumpMlRates[p - 1] : 21.5;
+    const estSec = Math.ceil(ml / rate);
+    if (estSec > 10 && !overrideEnabled) {
+      warningEl.innerText = 'Run needs ' + estSec + 's (>10s). Enable Override to execute.';
+      warningEl.style.display = 'block';
+      return;
+    }
+    url += '&ml=' + ml;
+  } else {
+    url += '&t=' + t;
+  }
+
+  fetch(url)
+    .then(r => r.text())
+    .then(msg => {
+      if (msg === 'OVERRIDE_REQUIRED') {
+        warningEl.innerText = 'Override required: this run exceeds 10s watchdog.';
+        warningEl.style.display = 'block';
+      }
+    });
 }
 
 function controlPump(a, p) { 
@@ -1058,6 +1305,10 @@ let routines = [];
 let mode = 'static';
 let selP = 0, selS = 0, isInverted = false, editId = null;
 const dayNames = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+let runInputMode = 'sec';
+let pumpMlRates = [21.5, 21.5, 21.5, 21.5];
+let overrideEnabled = false;
+let apNoticeShown = false;
 
 function loadRoutinesFromESP() {
   fetch('/routines')
@@ -1073,13 +1324,16 @@ function loadRoutinesFromESP() {
 }
 
 function saveRoutinesToESP() {
-  fetch('/routines', {
+  return fetch('/routines', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(routines)
   })
   .then(r => r.text())
-  .then(() => console.log('Routines saved'))
+  .then(() => {
+    console.log('Routines saved');
+    showSaveToast('Settings Stored');
+  })
   .catch(e => console.error('Save failed:', e));
 }
 
@@ -1201,6 +1455,7 @@ function saveRoutineBtn() {
   
   const data = {
     id: editId || Date.now(),
+    enabled: editId ? ((routines.find(r => r.id === editId) || {}).enabled !== false) : true,
     name: name.value.trim(),
     mode: mode,
     days: activeDays,
@@ -1253,7 +1508,8 @@ function renderRoutines() {
       details = r.rangeStr + ' • ' + r.val + '% trigger';
     }
     
-    item.innerHTML = '<div><div><b>' + r.name + '</b> ' + modeTag + pumpTag + sensorTag + 
+    const enabledChecked = (r.enabled === false) ? '' : 'checked';
+    item.innerHTML = '<div><div><input type="checkbox" ' + enabledChecked + ' onchange="toggleRoutineEnabled(' + r.id + ', this.checked)" style="margin-right:8px;"><b>' + r.name + '</b> ' + modeTag + pumpTag + sensorTag + 
       '</div><div class="day-label">' + dayStr + '</div><div style="font-size:0.85em; color:#666; margin-top:2px;">' + 
       details + '</div></div><div style="display:flex; align-items:center;"><button class="action-btn btn-run" onclick="runRoutine(' + 
       r.id + ')" title="Run now"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button><button class="action-btn btn-edit" onclick="openModal(' + 
@@ -1264,10 +1520,18 @@ function renderRoutines() {
 }
 
 function runRoutine(id) {
-  fetch('/routine/run?id=' + id, {method: 'POST'})
+  fetch('/routine/run?id=' + id)
     .then(r => r.text())
-    .then(msg => alert('Routine executed! (simulated)'))
+    .then(msg => alert('Routine executed! (Demo mode - no real pump action)'))
     .catch(e => console.error('Run failed:', e));
+}
+
+function toggleRoutineEnabled(id, enabled) {
+  const idx = routines.findIndex(r => r.id === id);
+  if (idx >= 0) {
+    routines[idx].enabled = enabled;
+    saveRoutinesToESP();
+  }
 }
 
 function deleteRoutine(id) {
@@ -1298,6 +1562,7 @@ function resetForm() {
 }
 
 let notifications = [];
+let notifEditId = null;
 
 function loadAutomationsFromESP() {
   fetch('/automations')
@@ -1313,37 +1578,89 @@ function loadAutomationsFromESP() {
 }
 
 function saveAutomationsToESP() {
-  fetch('/automations', {
+  return fetch('/automations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(notifications)
   })
   .then(r => r.text())
-  .then(() => console.log('Automations saved'))
+  .then(() => {
+    console.log('Automations saved');
+    showSaveToast('Settings Stored');
+  })
   .catch(e => console.error('Save failed:', e));
 }
 
-function openNotifModal() {
+function openNotifModal(id = null) {
+  notifEditId = null;
   document.getElementById('notif-name').value = "";
   document.getElementById('notif-when').value = "";
   document.getElementById('notif-if').value = "";
   document.getElementById('notif-do').value = "";
   document.getElementById('notif-message').value = "";
+  document.getElementById('notif-if-lid-mins').value = "10";
+  document.getElementById('notif-led-mode').value = "normal";
+  document.getElementById('notif-repeat-hours').value = "0";
   
   document.getElementById('when-options').classList.add('hidden');
   document.getElementById('when-sensor-group').classList.add('hidden');
+  document.getElementById('when-water-group').classList.add('hidden');
   document.getElementById('when-pump-group').classList.add('hidden');
   document.getElementById('when-time-group').classList.add('hidden');
   
   document.getElementById('if-options').classList.add('hidden');
   document.getElementById('if-sensor-group').classList.add('hidden');
+  document.getElementById('if-water-group').classList.add('hidden');
   document.getElementById('if-time-group').classList.add('hidden');
+  document.getElementById('if-lid-group').classList.add('hidden');
   
   document.getElementById('do-options').classList.add('hidden');
   document.getElementById('do-whatsapp-group').classList.add('hidden');
   document.getElementById('do-pump-group').classList.add('hidden');
   document.getElementById('do-pump-duration').classList.add('hidden');
+  document.getElementById('do-led-group').classList.add('hidden');
   
+  document.getElementById('notif-modal-title').innerText = "Create Automation";
+
+  if (id) {
+    const a = notifications.find(x => x.id === id);
+    if (a) {
+      notifEditId = id;
+      document.getElementById('notif-modal-title').innerText = "Edit Automation";
+      document.getElementById('notif-name').value = a.name || "";
+      document.getElementById('notif-when').value = (a.when && a.when.type) ? a.when.type : "";
+      updateWhenOptions();
+      if (a.when) {
+        if (a.when.sensor) document.getElementById('notif-sensor').value = a.when.sensor;
+        if (a.when.threshold) document.getElementById('notif-threshold').value = a.when.threshold;
+        if (a.when.threshold) document.getElementById('notif-water-threshold').value = a.when.threshold;
+        if (a.when.pump) document.getElementById('notif-pump').value = a.when.pump;
+        if (a.when.time) document.getElementById('notif-time').value = a.when.time;
+      }
+
+      document.getElementById('notif-if').value = (a.if && a.if.type) ? a.if.type : "";
+      updateIfOptions();
+      if (a.if) {
+        if (a.if.sensor) document.getElementById('notif-if-sensor').value = a.if.sensor;
+        if (a.if.threshold) document.getElementById('notif-if-threshold').value = a.if.threshold;
+        if (a.if.threshold) document.getElementById('notif-if-water-threshold').value = a.if.threshold;
+        if (a.if.timeFrom) document.getElementById('notif-if-time-from').value = a.if.timeFrom;
+        if (a.if.timeTo) document.getElementById('notif-if-time-to').value = a.if.timeTo;
+        if (a.if.minutes) document.getElementById('notif-if-lid-mins').value = a.if.minutes;
+      }
+
+      document.getElementById('notif-do').value = (a.do && a.do.type) ? a.do.type : "";
+      updateDoOptions();
+      if (a.do) {
+        if (a.do.message) document.getElementById('notif-message').value = a.do.message;
+        if (a.do.pump) document.getElementById('notif-do-pump').value = a.do.pump;
+        if (a.do.duration) document.getElementById('notif-pump-duration').value = a.do.duration;
+        if (a.do.ledMode) document.getElementById('notif-led-mode').value = a.do.ledMode;
+        if (a.do.repeatHours != null) document.getElementById('notif-repeat-hours').value = a.do.repeatHours;
+      }
+    }
+  }
+
   hideNotifErrs();
   document.getElementById('notif-modal-container').classList.remove('hidden');
 }
@@ -1356,17 +1673,21 @@ function updateWhenOptions() {
   const when = document.getElementById('notif-when').value;
   const whenOptions = document.getElementById('when-options');
   const sensorGroup = document.getElementById('when-sensor-group');
+  const waterGroup = document.getElementById('when-water-group');
   const pumpGroup = document.getElementById('when-pump-group');
   const timeGroup = document.getElementById('when-time-group');
   
   sensorGroup.classList.add('hidden');
+  waterGroup.classList.add('hidden');
   pumpGroup.classList.add('hidden');
   timeGroup.classList.add('hidden');
   
   if(when) {
     whenOptions.classList.remove('hidden');
-    if(when.includes('moisture') || when.includes('water')) {
+    if(when.includes('moisture')) {
       sensorGroup.classList.remove('hidden');
+    } else if (when.includes('water')) {
+      waterGroup.classList.remove('hidden');
     } else if(when.includes('pump')) {
       pumpGroup.classList.remove('hidden');
     } else if(when === 'time') {
@@ -1375,7 +1696,6 @@ function updateWhenOptions() {
   } else {
     whenOptions.classList.add('hidden');
   }
-  
   hideNotifErrs();
 }
 
@@ -1383,17 +1703,25 @@ function updateIfOptions() {
   const ifCond = document.getElementById('notif-if').value;
   const ifOptions = document.getElementById('if-options');
   const sensorGroup = document.getElementById('if-sensor-group');
+  const waterGroup = document.getElementById('if-water-group');
   const timeGroup = document.getElementById('if-time-group');
+  const lidGroup = document.getElementById('if-lid-group');
   
   sensorGroup.classList.add('hidden');
+  waterGroup.classList.add('hidden');
   timeGroup.classList.add('hidden');
+  lidGroup.classList.add('hidden');
   
   if(ifCond) {
     ifOptions.classList.remove('hidden');
-    if(ifCond.includes('moisture') || ifCond.includes('water')) {
+    if(ifCond.includes('moisture')) {
       sensorGroup.classList.remove('hidden');
+    } else if(ifCond.includes('water')) {
+      waterGroup.classList.remove('hidden');
     } else if(ifCond === 'time_between') {
       timeGroup.classList.remove('hidden');
+    } else if(ifCond === 'lid_off_for') {
+      lidGroup.classList.remove('hidden');
     }
   } else {
     ifOptions.classList.add('hidden');
@@ -1406,10 +1734,12 @@ function updateDoOptions() {
   const whatsappGroup = document.getElementById('do-whatsapp-group');
   const pumpGroup = document.getElementById('do-pump-group');
   const pumpDuration = document.getElementById('do-pump-duration');
+  const ledGroup = document.getElementById('do-led-group');
   
   whatsappGroup.classList.add('hidden');
   pumpGroup.classList.add('hidden');
   pumpDuration.classList.add('hidden');
+  ledGroup.classList.add('hidden');
   
   if(doAction) {
     doOptions.classList.remove('hidden');
@@ -1420,11 +1750,12 @@ function updateDoOptions() {
       if(doAction === 'pump_on') {
         pumpDuration.classList.remove('hidden');
       }
+    } else if (doAction === 'led_mode') {
+      ledGroup.classList.remove('hidden');
     }
   } else {
     doOptions.classList.add('hidden');
   }
-  
   hideNotifErrs();
 }
 
@@ -1459,36 +1790,44 @@ function saveNotification() {
     document.getElementById('err-notif-do').style.display = 'block';
     valid = false;
   }
-  
   if(!valid) return;
   
   const automation = {
-    id: Date.now(),
+    id: notifEditId || Date.now(),
+    enabled: notifEditId ? ((notifications.find(n => n.id === notifEditId) || {}).enabled !== false) : true,
     name: name,
     when: {
       type: when,
-      sensor: document.getElementById('notif-sensor') ? document.getElementById('notif-sensor').value : null,
-      threshold: document.getElementById('notif-threshold') ? document.getElementById('notif-threshold').value : null,
+      sensor: when.includes('moisture') ? document.getElementById('notif-sensor').value : null,
+      threshold: when.includes('water') ? document.getElementById('notif-water-threshold').value : document.getElementById('notif-threshold').value,
       pump: document.getElementById('notif-pump') ? document.getElementById('notif-pump').value : null,
       time: document.getElementById('notif-time') ? document.getElementById('notif-time').value : null
     },
     if: ifCond ? {
       type: ifCond,
-      sensor: document.getElementById('notif-if-sensor') ? document.getElementById('notif-if-sensor').value : null,
-      threshold: document.getElementById('notif-if-threshold') ? document.getElementById('notif-if-threshold').value : null,
+      sensor: ifCond.includes('moisture') ? document.getElementById('notif-if-sensor').value : null,
+      threshold: ifCond.includes('water') ? document.getElementById('notif-if-water-threshold').value : document.getElementById('notif-if-threshold').value,
       timeFrom: document.getElementById('notif-if-time-from') ? document.getElementById('notif-if-time-from').value : null,
-      timeTo: document.getElementById('notif-if-time-to') ? document.getElementById('notif-if-time-to').value : null
+      timeTo: document.getElementById('notif-if-time-to') ? document.getElementById('notif-if-time-to').value : null,
+      minutes: document.getElementById('notif-if-lid-mins') ? document.getElementById('notif-if-lid-mins').value : null
     } : null,
     do: {
       type: doAction,
       message: document.getElementById('notif-message') ? document.getElementById('notif-message').value : null,
+      repeatHours: document.getElementById('notif-repeat-hours') ? document.getElementById('notif-repeat-hours').value : 0,
       pump: document.getElementById('notif-do-pump') ? document.getElementById('notif-do-pump').value : null,
-      duration: document.getElementById('notif-pump-duration') ? document.getElementById('notif-pump-duration').value : null
+      duration: document.getElementById('notif-pump-duration') ? document.getElementById('notif-pump-duration').value : null,
+      ledMode: document.getElementById('notif-led-mode') ? document.getElementById('notif-led-mode').value : null
     },
-    created: new Date().toLocaleString()
+    created: notifEditId ? ((notifications.find(n => n.id === notifEditId) || {}).created || new Date().toLocaleString()) : new Date().toLocaleString()
   };
   
-  notifications.unshift(automation);
+  if (notifEditId) {
+    const idx = notifications.findIndex(n => n.id === notifEditId);
+    if (idx >= 0) notifications[idx] = automation;
+  } else {
+    notifications.unshift(automation);
+  }
   saveAutomationsToESP();
   renderNotifications();
   closeNotifModal();
@@ -1500,9 +1839,11 @@ function getReadableCondition(type, data) {
     'moisture_above': 'Moisture sensor ' + data.sensor + ' rises above ' + data.threshold + '%',
     'water_below': 'Water tank falls below ' + data.threshold + '%',
     'water_above': 'Water tank rises above ' + data.threshold + '%',
+    'lid_off': 'LID is OFF',
     'pump_starts': 'Pump ' + data.pump + ' starts',
     'pump_stops': 'Pump ' + data.pump + ' stops',
     'time': 'At ' + data.time,
+    'lid_off_for': 'LID has been OFF for ' + data.minutes + ' mins',
     'time_between': 'Time is between ' + data.timeFrom + ' and ' + data.timeTo
   };
   return conditions[type] || type;
@@ -1510,9 +1851,10 @@ function getReadableCondition(type, data) {
 
 function getReadableAction(type, data) {
   const actions = {
-    'whatsapp': 'Send WhatsApp: "' + data.message + '"',
+    'whatsapp': 'Send WhatsApp: "' + data.message + '"' + ((data.repeatHours && Number(data.repeatHours) > 0) ? (' every ' + data.repeatHours + 'h') : ''),
     'pump_on': 'Turn pump ' + data.pump + ' ON for ' + data.duration + 's',
-    'pump_off': 'Turn pump ' + data.pump + ' OFF'
+    'pump_off': 'Turn pump ' + data.pump + ' OFF',
+    'led_mode': 'Set LED mode to ' + data.ledMode
   };
   return actions[type] || type;
 }
@@ -1531,7 +1873,8 @@ function renderNotifications() {
     if(n.if) {
       ifCondition = '<div class="automation-detail"><strong>If:</strong> ' + getReadableCondition(n.if.type, n.if) + '</div>';
     }
-    item.innerHTML = '<div class="notif-content"><h4>' + n.name + '</h4><div class="automation-detail"><strong>When:</strong> ' + 
+    const enabledChecked = (n.enabled === false) ? '' : 'checked';
+    item.innerHTML = '<div class="notif-content"><h4><input type="checkbox" ' + enabledChecked + ' onchange="toggleAutomationEnabled(' + n.id + ', this.checked)" style="margin-right:8px;">' + n.name + '</h4><div class="automation-detail"><strong>When:</strong> ' + 
       getReadableCondition(n.when.type, n.when) + '</div>' + ifCondition + '<div class="automation-detail"><strong>Do:</strong> ' + 
       getReadableAction(n.do.type, n.do) + '</div><div class="notif-timestamp">Created: ' + n.created + 
       '</div></div><div style="display:flex; align-items:center;"><button class="action-btn btn-run" onclick="runAutomation(' + n.id + 
@@ -1543,14 +1886,22 @@ function renderNotifications() {
 }
 
 function runAutomation(id) {
-  fetch('/automation/run?id=' + id, {method: 'POST'})
+  fetch('/automation/run?id=' + id)
     .then(r => r.text())
-    .then(msg => alert('Automation executed! (simulated)'))
+    .then(msg => alert('Automation executed! (Demo mode)'))
     .catch(e => console.error('Run failed:', e));
 }
 
+function toggleAutomationEnabled(id, enabled) {
+  const idx = notifications.findIndex(n => n.id === id);
+  if (idx >= 0) {
+    notifications[idx].enabled = enabled;
+    saveAutomationsToESP();
+  }
+}
+
 function editAutomation(id) {
-  alert('Edit automation functionality coming soon!');
+  openNotifModal(id);
 }
 
 function deleteNotification(id) {
@@ -1561,21 +1912,202 @@ function deleteNotification(id) {
   }
 }
 
+function getSelectedLedMode() {
+  const selected = document.querySelector('input[name="led-mode"]:checked');
+  return selected ? selected.value : 'normal';
+}
+
+function setSelectedLedMode(mode) {
+  const radio = document.querySelector('input[name="led-mode"][value="' + mode + '"]');
+  if (radio) radio.checked = true;
+  toggleLedControlCards();
+}
+
+function toggleLedControlCards() {
+  const mode = getSelectedLedMode();
+  document.getElementById('led-static-card').classList.toggle('hidden', mode !== 'static');
+  document.getElementById('led-moving-card').classList.toggle('hidden', mode !== 'moving');
+  document.getElementById('led-smart-card').classList.toggle('hidden', mode !== 'smart');
+  document.getElementById('led-breathing-card').classList.toggle('hidden', mode !== 'breathing');
+  document.getElementById('led-rgb-card').classList.toggle('hidden', mode !== 'rgb');
+}
+
+function getColorValues(prefix) {
+  const values = [];
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById(prefix + i);
+    values.push(el ? el.value : '#000000');
+  }
+  return values;
+}
+
+function setColorValues(prefix, values) {
+  if (!Array.isArray(values)) return;
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById(prefix + i);
+    if (el && values[i - 1]) el.value = values[i - 1];
+  }
+}
+
+function updateLedWaterPreview(waterPct) {
+  const pct = Math.max(0, Math.min(100, parseInt(waterPct || 0, 10)));
+  document.getElementById('led-water-pct').innerText = pct;
+  const smartColors = getColorValues('led-smart-');
+  const litBands = Math.ceil(pct / 20);
+  for (let band = 1; band <= 5; band++) {
+    const el = document.getElementById('band-' + band);
+    if (!el) continue;
+    el.style.background = smartColors[band - 1];
+    el.style.opacity = (band <= litBands && pct > 0) ? '1' : '0.15';
+  }
+}
+
+function loadLedStatus() {
+  fetch('/led/status')
+    .then(r => r.json())
+    .then(data => {
+      setSelectedLedMode(data.mode || 'normal');
+      if (data.static) document.getElementById('led-static-color').value = data.static;
+      if (data.breathing) document.getElementById('led-breath-color').value = data.breathing;
+      if (typeof data.speed === 'number') {
+        document.getElementById('led-speed').value = data.speed;
+        document.getElementById('led-speed-label').innerText = Number(data.speed).toFixed(2);
+      }
+      if (typeof data.rgbSpeed === 'number') {
+        document.getElementById('led-rgb-speed').value = data.rgbSpeed;
+        document.getElementById('led-rgb-speed-label').innerText = Number(data.rgbSpeed).toFixed(2);
+      }
+      if (typeof data.brightness === 'number') {
+        document.getElementById('led-brightness').value = data.brightness;
+        document.getElementById('led-brightness-label').innerText = data.brightness;
+      }
+      setColorValues('led-moving-', data.moving || []);
+      setColorValues('led-smart-', data.smart || []);
+      updateLedWaterPreview(data.water || 0);
+      toggleLedControlCards();
+    })
+    .catch(e => console.error('LED status failed:', e));
+}
+
+function saveLedConfig() {
+  const payload = {
+    mode: getSelectedLedMode(),
+    speed: parseFloat(document.getElementById('led-speed').value || '0.35'),
+    rgbSpeed: parseFloat(document.getElementById('led-rgb-speed').value || '1.00'),
+    brightness: parseInt(document.getElementById('led-brightness').value || '255', 10),
+    static: document.getElementById('led-static-color').value,
+    breathing: document.getElementById('led-breath-color').value,
+    moving: getColorValues('led-moving-'),
+    smart: getColorValues('led-smart-')
+  };
+
+  fetch('/led/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  })
+  .then(r => r.text())
+  .then(() => {
+    loadLedStatus();
+    showSaveToast('Settings Stored');
+  })
+  .catch(e => console.error('LED save failed:', e));
+}
+
+function setLedModeQuick(mode) {
+  fetch('/led/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: mode})
+  })
+  .then(r => r.text())
+  .then(() => {
+    loadLedStatus();
+    showSaveToast('LED mode updated');
+  })
+  .catch(e => console.error('LED quick mode failed:', e));
+}
+
+function showSaveToast(message) {
+  const toast = document.getElementById('save-toast');
+  toast.innerText = message || 'Settings Stored';
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 1600);
+}
+
+function syncTimeFromDevice() {
+  const tzOffsetMin = new Date().getTimezoneOffset();
+  fetch('/time/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({epochMs: Date.now(), tzOffsetMin: tzOffsetMin})
+  }).catch(() => {});
+}
+
+function setRunInputMode(mode) {
+  runInputMode = mode;
+  const header = document.getElementById('run-mode-header');
+  const inputs = [1,2,3,4].map(i => document.getElementById('t' + i));
+  if (mode === 'ml') {
+    header.innerText = 'ML Dispensed';
+    inputs.forEach(i => { i.value = 215; i.min = 1; i.step = 1; });
+  } else {
+    header.innerText = 'Timed Run (s)';
+    inputs.forEach(i => { i.value = 10; i.min = 1; i.step = 1; });
+  }
+}
+
+function runPumpCalibration(pump) {
+  fetch('/pump?api=1&p=' + pump + '&t=10');
+}
+
+function savePumpCalibration(pump) {
+  const ml = parseFloat(document.getElementById('pumpMl' + pump).value || '0');
+  if (ml <= 0) return;
+  fetch('/calibrate?type=pumpMl&sensor=' + pump + '&ml=' + ml + '&sec=10')
+    .then(() => {
+      showSaveToast('Settings Stored');
+      updateStatus();
+    });
+}
+
 function updateStatus() {
   fetch('/status')
     .then(r => r.json())
     .then(data => {
-      document.getElementById("waterLvl").innerText = data.water;
+      if (data.lidOff) {
+        document.getElementById("waterLvl").innerText = "LID OFF";
+      } else {
+        document.getElementById("waterLvl").innerText = data.water + "%";
+      }
+      if (data.rtcTime) document.getElementById("dashTime").innerText = data.rtcTime;
+      if (data.rtcDay) document.getElementById("dashDay").innerText = data.rtcDay;
+      if (data.apMode && !apNoticeShown) {
+        apNoticeShown = true;
+        alert('AP mode active: WhatsApp and NTP clock sync will not work without internet.');
+      }
+      overrideEnabled = !!data.override;
+      if (Array.isArray(data.pumpMl) && data.pumpMl.length === 4) {
+        pumpMlRates = data.pumpMl.map(v => Number(v) || 21.5);
+      }
       for(let i=1; i<=4; i++) {
-        document.getElementById("m" + i).innerText = data.m[i-1];
+        if (data.raw[i-1] < 900) {
+          document.getElementById("m" + i).innerText = "Disconected";
+        } else {
+          document.getElementById("m" + i).innerText = data.m[i-1].toFixed(0) + "%";
+        }
         document.getElementById("raw" + i).innerText = data.raw[i-1];
+        document.getElementById("pumpDot" + i).classList.toggle("on", !!data.pumps[i-1]);
+        const calEl = document.getElementById('pumpMl' + i);
+        if (calEl && pumpMlRates[i-1]) calEl.value = (pumpMlRates[i-1] * 10).toFixed(1);
         document.getElementById('temp').innerText = data.temperature;
       }
       if(data.waterRaw) {
         document.getElementById("wRaw").innerText = data.waterRaw;
       }
+      updateLedWaterPreview(data.water);
       document.getElementById("status-dot").style.backgroundColor = "#4CAF50";
-      document.getElementById("conn-status").innerText = "Connected (Simulated)";
+      document.getElementById("conn-status").innerText = "Connected (Simulation)";
       document.getElementById("last-upd").innerText = new Date().toLocaleTimeString();
     })
     .catch(e => {
@@ -1586,10 +2118,33 @@ function updateStatus() {
 
 window.addEventListener("DOMContentLoaded", function() {
   updateSliders();
+  setRunInputMode('sec');
   updateStatus();
   setInterval(updateStatus, 2000);
   loadRoutinesFromESP();
   loadAutomationsFromESP();
+  loadLedStatus();
+  syncTimeFromDevice();
+
+  document.querySelectorAll('input[name="led-mode"]').forEach(el => {
+    el.addEventListener('change', toggleLedControlCards);
+  });
+
+  document.getElementById('led-speed').addEventListener('input', function() {
+    document.getElementById('led-speed-label').innerText = Number(this.value).toFixed(2);
+  });
+  document.getElementById('led-rgb-speed').addEventListener('input', function() {
+    document.getElementById('led-rgb-speed-label').innerText = Number(this.value).toFixed(2);
+  });
+  document.getElementById('led-brightness').addEventListener('input', function() {
+    document.getElementById('led-brightness-label').innerText = this.value;
+  });
+
+  document.querySelectorAll('#led-smart-card input[type="color"]').forEach(el => {
+    el.addEventListener('input', function() {
+      updateLedWaterPreview(document.getElementById('waterLvl').innerText || 0);
+    });
+  });
 });
 </script>
 </body>
